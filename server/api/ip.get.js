@@ -1,10 +1,16 @@
 
 export default defineEventHandler(async (event) => {
   //TEST ONLY: "15.204.166.122" || "8.8.8.8" 
+  const ipWithoutXForwarded = getRequestIP(event, { xForwardedFor: true })
+  const ipWithXForwarded = getRequestIP(event, { xForwardedFor: true })
+
+  console.log(ipWithXForwarded, JSON.stringify({ ipWithXForwarded }));
+  console.log(ipWithoutXForwarded, JSON.stringify({ ipWithoutXForwarded }));
+
+
   const requestIp = getRequestIP(event, { xForwardedFor: true })
 
-  console.log({ requestIp });
-  
+
   const { ip = requestIp } = getQuery(event)
 
   if (!ip) {
