@@ -1,6 +1,6 @@
 import * as bitcoin from 'bitcoinjs-lib';
 import { ECPairFactory } from 'ecpair';
-import * as ecc from 'tiny-secp256k1';
+import * as ecc from '@bitcoinerlab/secp256k1';
 import { BIP32Factory } from 'bip32';
 import * as bip39 from 'bip39';
 import { CHAIN_TYPES, NETWORKS } from '~/db/schemas/Network.js';
