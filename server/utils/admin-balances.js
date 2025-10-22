@@ -1,0 +1,467 @@
+import { model } from 'mongoose';
+
+const AdminWallet = model('AdminWallet');
+const AdminBalance = model('AdminBalance');
+const Pair = model('Pair');
+
+// ============================================
+// ADMIN BALANCE QUERY FUNCTIONS
+// ============================================
+
+/**
+ * Get all admin balances grouped by pair
+ * Returns human-readable amounts
+ * 
+ * @param {Object} options - Query options
+ * @param {boolean} options.includeZeroBalances - Include balances with zero amounts
+ * @returns {Object} Balances grouped by pair symbol
+ */
+export async function getAdminBalancesByPair({ includeZeroBalances = true } = {}) {
+    const balances = await AdminBalance.find({
+        ...(!includeZeroBalances && {
+            $expr: {
+                $or: [
+                    { $gt: [{ $toLong: "$available" }, 0] },
+                    { $gt: [{ $toLong: "$locked" }, 0] }
+                ]
+            }
+        })
+    }).populate('pair');
+
+    // Group by pair (in smallest units)
+    const grouped = {};
+
+    for (const balance of balances) {
+        const pairSymbol = balance.pair.symbol;
+
+        if (!grouped[pairSymbol]) {
+            grouped[pairSymbol] = {
+                pair: balance.pair,
+                networks: {},
+                totals: {
+                    available: '0',
+                    locked: '0',
+                    total: '0',
+                    totalSweptIn: '0',
+                    totalWithdrawnToUsers: '0',
+                    totalWithdrawnToAdmin: '0'
+                }
+            };
+        }
+
+        const total = add(balance.available, balance.locked);
+
+        grouped[pairSymbol].networks[balance.network] = {
+            available: balance.available,
+            locked: balance.locked,
+            total
+        };
+
+        grouped[pairSymbol].totals.available = add(grouped[pairSymbol].totals.available, balance.available);
+        grouped[pairSymbol].totals.locked = add(grouped[pairSymbol].totals.locked, balance.locked);
+        grouped[pairSymbol].totals.total = add(grouped[pairSymbol].totals.total, total);
+        grouped[pairSymbol].totals.totalSweptIn = add(grouped[pairSymbol].totals.totalSweptIn, balance.totalSweptIn);
+        grouped[pairSymbol].totals.totalWithdrawnToUsers = add(grouped[pairSymbol].totals.totalWithdrawnToUsers, balance.totalWithdrawnToUsers);
+        grouped[pairSymbol].totals.totalWithdrawnToAdmin = add(grouped[pairSymbol].totals.totalWithdrawnToAdmin, balance.totalWithdrawnToAdmin);
+    }
+
+    // Convert to human-readable
+    const formatted = {};
+
+    for (const [pairSymbol, data] of Object.entries(grouped)) {
+        const decimals = data.pair.decimals || 18;
+
+        formatted[pairSymbol] = {
+            pair: {
+                _id: data.pair._id,
+                symbol: data.pair.symbol,
+                baseAsset: data.pair.baseAsset,
+                decimals: data.pair.decimals
+            },
+            networks: {},
+            totals: {
+                available: toReadableUnit(data.totals.available, decimals),
+                locked: toReadableUnit(data.totals.locked, decimals),
+                total: toReadableUnit(data.totals.total, decimals),
+                totalSweptIn: toReadableUnit(data.totals.totalSweptIn, decimals),
+                totalWithdrawnToUsers: toReadableUnit(data.totals.totalWithdrawnToUsers, decimals),
+                totalWithdrawnToAdmin: toReadableUnit(data.totals.totalWithdrawnToAdmin, decimals)
+            }
+        };
+
+        for (const [network, netData] of Object.entries(data.networks)) {
+            formatted[pairSymbol].networks[network] = {
+                available: toReadableUnit(netData.available, decimals),
+                locked: toReadableUnit(netData.locked, decimals),
+                total: toReadableUnit(netData.total, decimals)
+            };
+        }
+    }
+
+    return formatted;
+}
+
+/**
+ * Get total admin balance for a specific pair across all networks
+ * Returns human-readable amounts
+ * 
+ * @param {string} baseAsset - Asset symbol (e.g., 'USDT', 'ETH', 'BTC')
+ * @returns {Object} Total balances and breakdown by network
+ */
+export async function getAdminTotalBalanceForPair(baseAsset) {
+    const pair = await Pair.findOne({ baseAsset });
+    if (!pair) {
+        throw new Error(`${baseAsset} not found`);
+    }
+
+    const balances = await AdminBalance.find({ pair: pair._id });
+
+    // Calculate totals in smallest units
+    let totalAvailable = '0';
+    let totalLocked = '0';
+    let totalSweptIn = '0';
+    let totalWithdrawnToUsers = '0';
+    let totalWithdrawnToAdmin = '0';
+
+    const byNetwork = {};
+
+    balances.forEach(balance => {
+        totalAvailable = add(totalAvailable, balance.available);
+        totalLocked = add(totalLocked, balance.locked);
+        totalSweptIn = add(totalSweptIn, balance.totalSweptIn);
+        totalWithdrawnToUsers = add(totalWithdrawnToUsers, balance.totalWithdrawnToUsers);
+        totalWithdrawnToAdmin = add(totalWithdrawnToAdmin, balance.totalWithdrawnToAdmin);
+
+        const networkTotal = add(balance.available, balance.locked);
+
+        byNetwork[balance.network] = {
+            available: balance.available,
+            locked: balance.locked,
+            total: networkTotal
+        };
+    });
+
+    const decimals = pair.decimals || 18;
+    const totalAmount = add(totalAvailable, totalLocked);
+
+    // Format to human-readable
+    const formattedByNetwork = {};
+    for (const [network, data] of Object.entries(byNetwork)) {
+        formattedByNetwork[network] = {
+            available: toReadableUnit(data.available, decimals),
+            locked: toReadableUnit(data.locked, decimals),
+            total: toReadableUnit(data.total, decimals)
+        };
+    }
+
+    return {
+        pair: {
+            _id: pair._id,
+            symbol: pair.symbol,
+            baseAsset: pair.baseAsset,
+            decimals: pair.decimals
+        },
+        totals: {
+            available: toReadableUnit(totalAvailable, decimals),
+            locked: toReadableUnit(totalLocked, decimals),
+            total: toReadableUnit(totalAmount, decimals),
+            totalSweptIn: toReadableUnit(totalSweptIn, decimals),
+            totalWithdrawnToUsers: toReadableUnit(totalWithdrawnToUsers, decimals),
+            totalWithdrawnToAdmin: toReadableUnit(totalWithdrawnToAdmin, decimals)
+        },
+        byNetwork: formattedByNetwork
+    };
+}
+
+// ============================================
+// ADMIN BALANCE MODIFICATION FUNCTIONS
+// ============================================
+
+/**
+ * Add balance to admin (when sweeping from users)
+ * Input: human-readable amount
+ * Output: human-readable result
+ * 
+ * @param {string} baseAsset - Asset symbol
+ * @param {string} amount - Human-readable amount (e.g., "100.5")
+ * @param {string} targetNetwork - Network to add balance to
+ * @returns {Object} Transaction details
+ */
+export async function addAdminBalance(baseAsset, amount, targetNetwork) {
+    const pair = await Pair.findOne({ baseAsset });
+    if (!pair) {
+        throw new Error(`${baseAsset} not found`);
+    }
+
+    const amountSmallest = toSmallestUnit(amount, pair.decimals);
+
+    const balance = await AdminBalance.findOne({
+        pair: pair._id,
+        network: targetNetwork
+    });
+
+    if (!balance) {
+        throw new Error(`No admin balance found for ${baseAsset} on ${targetNetwork}`);
+    }
+
+    balance.available = add(balance.available, amountSmallest);
+    balance.totalSweptIn = add(balance.totalSweptIn, amountSmallest);
+    balance.lastSweepAt = new Date();
+
+    await balance.save();
+
+    return {
+        baseAsset,
+        network: targetNetwork,
+        amount: toReadableUnit(amountSmallest, pair.decimals),
+        newAvailable: toReadableUnit(balance.available, pair.decimals),
+        balanceId: balance._id
+    };
+}
+
+/**
+ * Deduct balance from admin (for withdrawals)
+ * Input: human-readable amount
+ * Output: human-readable result
+ * 
+ * @param {string} baseAsset - Asset symbol
+ * @param {string} amount - Human-readable amount
+ * @param {string} withdrawalType - 'user' or 'admin'
+ * @param {string} sourceNetwork - Specific network to deduct from (optional)
+ * @returns {Object} Transaction details
+ */
+export async function deductAdminBalance(
+    baseAsset,
+    amount,
+    withdrawalType = 'user',
+    sourceNetwork = null
+) {
+    const pair = await Pair.findOne({ baseAsset });
+    if (!pair) {
+        throw new Error(`${baseAsset} not found`);
+    }
+
+    const amountSmallest = toSmallestUnit(amount, pair.decimals);
+
+    let balances = await AdminBalance.find({
+        pair: pair._id
+    }).sort({ available: -1 });
+
+    // If source network specified, deduct from that network only
+    if (sourceNetwork) {
+        const balance = balances.find(b => b.network === sourceNetwork);
+        if (!balance) {
+            throw new Error(`No admin balance found for ${baseAsset} on ${sourceNetwork}`);
+        }
+
+        if (!isGreaterOrEqual(balance.available, amountSmallest)) {
+            throw new Error(
+                `Insufficient admin balance on ${sourceNetwork}. Available: ${toReadableUnit(balance.available, pair.decimals)}, Required: ${amount}`
+            );
+        }
+
+        balance.available = subtract(balance.available, amountSmallest);
+
+        if (withdrawalType === 'user') {
+            balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, amountSmallest);
+        } else {
+            balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, amountSmallest);
+        }
+
+        balance.lastWithdrawalAt = new Date();
+
+        await balance.save();
+
+        return {
+            baseAsset,
+            network: sourceNetwork,
+            amount: toReadableUnit(amountSmallest, pair.decimals),
+            newAvailable: toReadableUnit(balance.available, pair.decimals),
+            balanceId: balance._id
+        };
+    }
+
+    // Otherwise, deduct from balances with highest availability
+    let remaining = amountSmallest;
+    const deducted = [];
+
+    for (const balance of balances) {
+        if (compare(remaining, '0') <= 0) break;
+
+        if (compare(balance.available, '0') <= 0) continue;
+
+        const toDeduct = min(balance.available, remaining);
+
+        balance.available = subtract(balance.available, toDeduct);
+
+        if (withdrawalType === 'user') {
+            balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, toDeduct);
+        } else {
+            balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, toDeduct);
+        }
+
+        balance.lastWithdrawalAt = new Date();
+
+        await balance.save();
+
+        deducted.push({
+            balanceId: balance._id,
+            network: balance.network,
+            amount: toReadableUnit(toDeduct, pair.decimals),
+            newAvailable: toReadableUnit(balance.available, pair.decimals)
+        });
+
+        remaining = subtract(remaining, toDeduct);
+    }
+
+    if (compare(remaining, '0') > 0) {
+        throw new Error(
+            `Insufficient admin balance. Required: ${amount}, Missing: ${toReadableUnit(remaining, pair.decimals)}`
+        );
+    }
+
+    return {
+        baseAsset,
+        totalAmount: amount,
+        distributions: deducted
+    };
+}
+
+/**
+ * Lock admin balance (for pending withdrawals)
+ * Input: human-readable amount
+ * Output: distributions in smallest units
+ * 
+ * @param {string} baseAsset - Asset symbol
+ * @param {string} amount - Human-readable amount
+ * @param {string} preferredNetwork - Preferred network to lock from
+ * @returns {Object} Lock details with distributions
+ */
+export async function lockAdminBalance(baseAsset, amount, preferredNetwork = null) {
+    const pair = await Pair.findOne({ baseAsset });
+    if (!pair) {
+        throw new Error(`${baseAsset} not found`);
+    }
+
+    const amountSmallest = toSmallestUnit(amount, pair.decimals);
+
+    let balances = await AdminBalance.find({
+        pair: pair._id
+    }).sort({ available: -1 });
+
+    // Prefer specific network if specified
+    if (preferredNetwork) {
+        balances = balances.sort((a, b) => {
+            if (a.network === preferredNetwork) return -1;
+            if (b.network === preferredNetwork) return 1;
+            return compare(b.available, a.available);
+        });
+    }
+
+    let remaining = amountSmallest;
+    const locked = [];
+
+    // Lock from balances until we have enough
+    for (const balance of balances) {
+        if (compare(remaining, '0') <= 0) break;
+
+        if (compare(balance.available, '0') <= 0) continue;
+
+        const toLock = min(balance.available, remaining);
+
+        balance.available = subtract(balance.available, toLock);
+        balance.locked = add(balance.locked, toLock);
+
+        await balance.save();
+
+        locked.push({
+            balanceId: balance._id,
+            network: balance.network,
+            amount: toLock // Keep in smallest units
+        });
+
+        remaining = subtract(remaining, toLock);
+    }
+
+    if (compare(remaining, '0') > 0) {
+        // Rollback
+        for (const item of locked) {
+            const balance = await AdminBalance.findById(item.balanceId);
+            balance.available = add(balance.available, item.amount);
+            balance.locked = subtract(balance.locked, item.amount);
+            await balance.save();
+        }
+
+        throw new Error(
+            `Insufficient admin balance. Required: ${amount}, Missing: ${toReadableUnit(remaining, pair.decimals)}`
+        );
+    }
+
+    return {
+        baseAsset,
+        totalLocked: toReadableUnit(amountSmallest, pair.decimals),
+        distributions: locked // Keep in smallest units
+    };
+}
+
+/**
+ * Unlock admin balance (when withdrawal is cancelled)
+ * Input: distributions in smallest units from lockAdminBalance
+ * 
+ * @param {string} baseAsset - Asset symbol
+ * @param {Array} distributions - Array of locked distributions
+ * @returns {Object} Success status
+ */
+export async function unlockAdminBalance(baseAsset, distributions) {
+    const pair = await Pair.findOne({ baseAsset });
+    if (!pair) {
+        throw new Error(`${baseAsset} not found`);
+    }
+
+    for (const dist of distributions) {
+        const balance = await AdminBalance.findById(dist.balanceId);
+        if (!balance) continue;
+
+        balance.locked = subtract(balance.locked, dist.amount);
+        balance.available = add(balance.available, dist.amount);
+
+        await balance.save();
+    }
+
+    return { success: true };
+}
+
+/**
+ * Finalize locked admin balance (when withdrawal completes)
+ * Input: distributions in smallest units
+ * 
+ * @param {string} baseAsset - Asset symbol
+ * @param {Array} distributions - Array of locked distributions
+ * @param {string} withdrawalType - 'user' or 'admin'
+ * @returns {Object} Success status
+ */
+export async function finalizeLockedAdminBalance(baseAsset, distributions, withdrawalType = 'user') {
+    const pair = await Pair.findOne({ baseAsset });
+    if (!pair) {
+        throw new Error(`${baseAsset} not found`);
+    }
+
+    for (const dist of distributions) {
+        const balance = await AdminBalance.findById(dist.balanceId);
+        if (!balance) continue;
+
+        balance.locked = subtract(balance.locked, dist.amount);
+
+        if (withdrawalType === 'user') {
+            balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, dist.amount);
+        } else {
+            balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, dist.amount);
+        }
+
+        balance.lastWithdrawalAt = new Date();
+
+        await balance.save();
+    }
+
+    return { success: true };
+}
