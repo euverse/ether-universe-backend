@@ -2,6 +2,9 @@
 export default defineEventHandler(async (event) => {
   //TEST ONLY: "15.204.166.122" || "8.8.8.8" 
   const requestIp = getRequestIP(event, { xForwardedFor: true })
+
+  console.log({ requestIp });
+  
   const { ip = requestIp } = getQuery(event)
 
   if (!ip) {
