@@ -1,10 +1,8 @@
 
 export default defineEventHandler(async event => {
-
-
-    return {
-        isAllowed: true
-    }
+    // return {
+    //     isAllowed: true
+    // }
 
     const { walletAddress } = await getValidatedQuery(event, query => {
         // validateInput(query, {

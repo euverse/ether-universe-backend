@@ -220,9 +220,7 @@ export async function getTotalBalanceForPair(tradingAccountId, baseAsset) {
   };
 }
 
-// ============================================
 // BALANCE MODIFICATION FUNCTIONS
-// ============================================
 
 /**
  * Add initial balance (first deposit for a pair)
@@ -413,9 +411,7 @@ export async function removeWithdrawal(
   return { distributions: removed };
 }
 
-// ============================================
 // ORDER-RELATED BALANCE OPERATIONS
-// ============================================
 
 /**
  * Lock balance for an order

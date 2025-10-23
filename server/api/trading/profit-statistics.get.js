@@ -43,7 +43,7 @@ export default defineEventHandler(async (event) => {
         .sort({ closedAt: 1 })
         .lean();
 
-    console.log(orders)
+    console.log('Orders found:', orders.length);
 
     // Generate statistics
     const statistics = generateProfitStatistics(orders, interval, startDate, endDate);
@@ -80,46 +80,48 @@ function generateProfitStatistics(orders, interval, startDate, endDate) {
         return [[Math.floor(Date.now() / 1000), 0]];
     }
 
-    const statistics = [];
-    let cumulativePnl = 0;
-
+    // Determine time range
     const start = startDate ? new Date(startDate) : new Date(orders[0].closedAt);
     const end = endDate ? new Date(endDate) : new Date();
 
     const intervalMs = getIntervalMs(interval);
-    const current = new Date(start);
-    const groupedData = {};
 
-    // Initialize time buckets
-    while (current <= end) {
-        const timestamp = Math.floor(current.getTime() / 1000);
-        groupedData[timestamp] = 0;
-        current.setTime(current.getTime() + intervalMs);
+    // Align start to interval boundary
+    const startMs = Math.floor(start.getTime() / intervalMs) * intervalMs;
+    const endMs = Math.ceil(end.getTime() / intervalMs) * intervalMs;
+
+    // Create time buckets
+    const buckets = [];
+    for (let time = startMs; time <= endMs; time += intervalMs) {
+        buckets.push({
+            timestamp: Math.floor(time / 1000),
+            pnl: 0
+        });
     }
 
-    // Group orders into time buckets
+    // Assign orders to buckets
     orders.forEach(order => {
         if (!order.closedAt) return;
 
         const orderTime = new Date(order.closedAt).getTime();
-        const bucketTime = Math.floor(orderTime / intervalMs) * intervalMs;
-        const timestamp = Math.floor(bucketTime / 1000);
 
-        if (groupedData[timestamp] !== undefined) {
-            groupedData[timestamp] += order.pnl || 0;
+        // Find the bucket this order belongs to
+        const bucketIndex = Math.floor((orderTime - startMs) / intervalMs);
+
+        if (bucketIndex >= 0 && bucketIndex < buckets.length) {
+            buckets[bucketIndex].pnl += order.pnl || 0;
         }
     });
 
-    // Build cumulative statistics array
-    Object.keys(groupedData)
-        .sort((a, b) => parseInt(a) - parseInt(b))
-        .forEach(timestamp => {
-            cumulativePnl += groupedData[timestamp];
-            statistics.push([
-                parseInt(timestamp),
-                parseFloat(cumulativePnl.toFixed(2))
-            ]);
-        });
+    // Build cumulative statistics
+    let cumulativePnl = 0;
+    const statistics = buckets.map(bucket => {
+        cumulativePnl += bucket.pnl;
+        return [
+            bucket.timestamp,
+            parseFloat(cumulativePnl.toFixed(2))
+        ];
+    });
 
     return statistics;
 }
@@ -135,8 +137,10 @@ function getIntervalMs(interval) {
         '1h': 60 * 60 * 1000,
         '4h': 4 * 60 * 60 * 1000,
         '1d': 24 * 60 * 60 * 1000,
-        '1w': 7 * 24 * 60 * 60 * 1000
+        '1w': 7 * 24 * 60 * 60 * 1000,
+        '1M': 30 * 24 * 60 * 60 * 1000, // Approximate month
+        '1y': 365 * 24 * 60 * 60 * 1000 // Approximate year
     };
 
-    return intervalMap[interval] || intervalMap['1d'];
+    return intervalMap[interval?.toLowerCase()] || intervalMap['1d'];
 }
