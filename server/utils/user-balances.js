@@ -1,35 +1,43 @@
-
 const Pair = getModel('Pair');
 const Wallet = getModel('Wallet');
 const Balance = getModel('Balance');
 
-// ============================================
-// BALANCE FORMATTING UTILITIES
-// ============================================
+// VALIDATION UTILITIES
 
 /**
- * Format balance object to human-readable
+ * Validate amount is positive
  */
-function formatBalanceToReadable(balance, decimals) {
-  return {
-    ...balance.toObject(),
-    initial: toReadableUnit(balance.initial, decimals),
-    available: toReadableUnit(balance.available, decimals),
-    locked: toReadableUnit(balance.locked, decimals),
-    total: toReadableUnit(add(balance.available, balance.locked), decimals),
-    totalDeposited: toReadableUnit(balance.totalDeposited, decimals),
-    totalAllocated: toReadableUnit(balance.totalAllocated, decimals),
-    totalWithdrawn: toReadableUnit(balance.totalWithdrawn, decimals)
-  };
+export function validatePositiveAmount(amount, fieldName = 'amount') {
+  if (!isPositive(amount)) {
+    throw new Error(`${fieldName} must be positive, got: ${amount}`);
+  }
 }
 
 /**
- * Format grouped balances to human-readable
+ * Validate pair has decimals
  */
-function formatGroupedBalances(grouped, decimals) {
+function validatePairDecimals(pair) {
+  if (pair.decimals === undefined || pair.decimals === null) {
+    throw new Error(`Pair ${pair.symbol || pair.baseAsset} is missing decimals configuration`);
+  }
+  if (!Number.isInteger(pair.decimals) || pair.decimals < 0 || pair.decimals > 30) {
+    throw new Error(`Invalid decimals for pair ${pair.symbol || pair.baseAsset}: ${pair.decimals}`);
+  }
+}
+
+// BALANCE FORMATTING UTILITIES
+
+/**
+ * Format grouped balances to human-readable
+ * Each pair uses its own decimals
+ */
+function formatGroupedBalances(grouped) {
   const formatted = {};
 
   for (const [pairSymbol, data] of Object.entries(grouped)) {
+    validatePairDecimals(data.pair);
+    const decimals = data.pair.decimals;
+
     formatted[pairSymbol] = {
       pair: data.pair,
       networks: {},
@@ -57,9 +65,7 @@ function formatGroupedBalances(grouped, decimals) {
   return formatted;
 }
 
-// ============================================
 // BALANCE QUERY FUNCTIONS
-// ============================================
 
 /**
  * Get all balances for a trading account grouped by pair
@@ -67,6 +73,11 @@ function formatGroupedBalances(grouped, decimals) {
  */
 export async function getBalancesByPair(tradingAccountId, { includeZeroBalances = true } = {}) {
   const wallets = await Wallet.find({ tradingAccount: tradingAccountId });
+
+  if (!wallets || wallets.length === 0) {
+    return {}; // No wallets = no balances
+  }
+
   const walletIds = wallets.map(w => w._id);
 
   const balances = await Balance.find({
@@ -81,10 +92,18 @@ export async function getBalancesByPair(tradingAccountId, { includeZeroBalances 
     })
   }).populate('pair');
 
+  if (!balances || balances.length === 0) {
+    return {}; // No balances found
+  }
+
   // Group by pair (in smallest units)
   const grouped = {};
 
   for (const balance of balances) {
+    if (!balance.pair) {
+      throw new Error(`Balance ${balance._id} is missing pair reference`);
+    }
+
     const pairSymbol = balance.pair.symbol;
 
     if (!grouped[pairSymbol]) {
@@ -121,11 +140,7 @@ export async function getBalancesByPair(tradingAccountId, { includeZeroBalances 
     grouped[pairSymbol].totals.totalWithdrawn = add(grouped[pairSymbol].totals.totalWithdrawn, balance.totalWithdrawn);
   }
 
-  // Convert to human-readable using first balance's pair decimals
-  const firstBalance = balances[0];
-  const decimals = firstBalance?.pair?.decimals || 18;
-
-  return formatGroupedBalances(grouped, decimals);
+  return formatGroupedBalances(grouped);
 }
 
 /**
@@ -135,8 +150,10 @@ export async function getBalancesByPair(tradingAccountId, { includeZeroBalances 
 export async function getTotalBalanceForPair(tradingAccountId, baseAsset) {
   const pair = await Pair.findOne({ baseAsset });
   if (!pair) {
-    throw createError({ statusCode: 404, message: `${baseAsset} not found` });
+    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
   }
+
+  validatePairDecimals(pair);
 
   const wallets = await Wallet.find({ tradingAccount: tradingAccountId });
   const walletIds = wallets.map(w => w._id);
@@ -174,7 +191,7 @@ export async function getTotalBalanceForPair(tradingAccountId, baseAsset) {
     };
   });
 
-  const decimals = pair.decimals || 18;
+  const decimals = pair.decimals;
   const totalAmount = add(totalAvailable, totalLocked);
 
   // Format to human-readable
@@ -217,10 +234,14 @@ export async function addInitialBalance(
   amount, // human-readable (e.g., "10.5")
   targetNetwork
 ) {
+  validatePositiveAmount(amount, 'amount');
+
   const pair = await Pair.findOne({ baseAsset });
   if (!pair) {
-    throw createError({ statusCode: 404, message: `${baseAsset} not found` });
+    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
   }
+
+  validatePairDecimals(pair);
 
   const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
@@ -234,7 +255,7 @@ export async function addInitialBalance(
   });
 
   if (!balance) {
-    throw new Error(`No balance found for network: ${targetNetwork}`);
+    throw new Error(`No balance record found for network: ${targetNetwork}`);
   }
 
   balance.initial = add(balance.initial, amountSmallest);
@@ -261,10 +282,14 @@ export async function addDeposit(
   amount, // human-readable
   targetNetwork
 ) {
+  validatePositiveAmount(amount, 'amount');
+
   const pair = await Pair.findOne({ baseAsset });
   if (!pair) {
-    throw createError({ statusCode: 404, message: `${baseAsset} not found` });
+    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
   }
+
+  validatePairDecimals(pair);
 
   const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
@@ -278,7 +303,7 @@ export async function addDeposit(
   });
 
   if (!balance) {
-    throw new Error(`No balance found for network: ${targetNetwork}`);
+    throw new Error(`No balance record found for network: ${targetNetwork}`);
   }
 
   balance.available = add(balance.available, amountSmallest);
@@ -304,10 +329,14 @@ export async function removeWithdrawal(
   amount, // human-readable
   sourceNetwork = null
 ) {
+  validatePositiveAmount(amount, 'amount');
+
   const pair = await Pair.findOne({ baseAsset });
   if (!pair) {
-    throw createError({ statusCode: 404, message: `${baseAsset} not found` });
+    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
   }
+
+  validatePairDecimals(pair);
 
   const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
@@ -319,11 +348,15 @@ export async function removeWithdrawal(
     pair: pair._id
   }).sort({ available: -1 });
 
+  if (!balances || balances.length === 0) {
+    throw new Error(`No balance records found for pair: ${baseAsset}`);
+  }
+
   // If source network specified, remove from that network only
   if (sourceNetwork) {
     const balance = balances.find(b => b.network === sourceNetwork);
     if (!balance) {
-      throw new Error(`No balance found for network: ${sourceNetwork}`);
+      throw new Error(`No balance record found for network: ${sourceNetwork}`);
     }
 
     if (!isGreaterOrEqual(balance.available, amountSmallest)) {
@@ -394,10 +427,14 @@ export async function lockBalanceForOrder(
   amount, // human-readable
   preferredNetwork = null
 ) {
+  validatePositiveAmount(amount, 'amount');
+
   const pair = await Pair.findOne({ baseAsset });
   if (!pair) {
-    throw createError({ statusCode: 404, message: `${baseAsset} not found` });
+    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
   }
+
+  validatePairDecimals(pair);
 
   const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
@@ -408,6 +445,10 @@ export async function lockBalanceForOrder(
     wallet: { $in: walletIds },
     pair: pair._id
   }).sort({ available: -1 });
+
+  if (!balances || balances.length === 0) {
+    throw new Error(`No balance records found for pair: ${baseAsset}`);
+  }
 
   // Prefer specific network if specified
   if (preferredNetwork) {
@@ -431,6 +472,8 @@ export async function lockBalanceForOrder(
 
     balance.available = subtract(balance.available, toLock);
     balance.locked = add(balance.locked, toLock);
+    balance.totalAllocated = add(balance.totalAllocated, toLock);
+    balance.lastAllocatedAt = new Date();
 
     await balance.save();
 
@@ -444,12 +487,29 @@ export async function lockBalanceForOrder(
   }
 
   if (compare(remaining, '0') > 0) {
-    // Rollback
+    // Rollback - attempt to undo all locks
+    const rollbackErrors = [];
+
     for (const item of locked) {
-      const balance = await Balance.findById(item.balanceId);
-      balance.available = add(balance.available, item.amount);
-      balance.locked = subtract(balance.locked, item.amount);
-      await balance.save();
+      try {
+        const balance = await Balance.findById(item.balanceId);
+        if (balance) {
+          balance.available = add(balance.available, item.amount);
+          balance.locked = subtract(balance.locked, item.amount);
+          balance.totalAllocated = subtract(balance.totalAllocated, item.amount);
+          await balance.save();
+        } else {
+          rollbackErrors.push(`Balance ${item.balanceId} not found during rollback`);
+        }
+      } catch (error) {
+        rollbackErrors.push(`Failed to rollback balance ${item.balanceId}: ${error.message}`);
+      }
+    }
+
+    if (rollbackErrors.length > 0) {
+      throw new Error(
+        `Insufficient balance AND rollback failed. Required: ${amount}, Missing: ${toReadableUnit(remaining, pair.decimals)}. Rollback errors: ${rollbackErrors.join('; ')}`
+      );
     }
 
     throw new Error(
@@ -468,19 +528,40 @@ export async function lockBalanceForOrder(
  * Input: distributions in smallest units from lockBalanceForOrder
  */
 export async function unlockBalance(baseAsset, distributions) {
-  const pair = await Pair.findOne({ baseAsset });
-  if (!pair) {
-    throw createError({ statusCode: 404, message: `${baseAsset} not found` });
+  if (!distributions || distributions.length === 0) {
+    throw new Error('No distributions provided for unlock');
   }
 
+  const pair = await Pair.findOne({ baseAsset });
+  if (!pair) {
+    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
+  }
+
+  validatePairDecimals(pair);
+
+  const errors = [];
+
   for (const dist of distributions) {
-    const balance = await Balance.findById(dist.balanceId);
-    if (!balance) continue;
+    try {
+      const balance = await Balance.findById(dist.balanceId);
 
-    balance.locked = subtract(balance.locked, dist.amount);
-    balance.available = add(balance.available, dist.amount);
+      if (!balance) {
+        errors.push(`Balance ${dist.balanceId} not found - funds may be permanently locked`);
+        continue;
+      }
 
-    await balance.save();
+      balance.locked = subtract(balance.locked, dist.amount);
+      balance.available = add(balance.available, dist.amount);
+      balance.lastUnlockedAt = new Date();
+
+      await balance.save();
+    } catch (error) {
+      errors.push(`Failed to unlock balance ${dist.balanceId}: ${error.message}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Unlock completed with errors: ${errors.join('; ')}`);
   }
 
   return { success: true };
