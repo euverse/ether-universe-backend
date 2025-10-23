@@ -1,11 +1,11 @@
 
 const Pair = getModel('Pair');
-const BINANCE_24HR_TICKER = 'https://api.binance.com/api/v3/ticker/24hr';
+const BINANCE_24HR_TICKER = useRuntimeConfig().BINANCE_TICKER_URL;
 
 async function fetchBinancePrices() {
   try {
     const data = await $fetch(BINANCE_24HR_TICKER);
-    
+
     // Get both USDT pairs and USD(T) stablecoin pairs
     const usdtPairs = data
       .filter(ticker => ticker.symbol.endsWith('USDT'))
@@ -22,12 +22,12 @@ async function fetchBinancePrices() {
 
     // Get stablecoin prices (e.g., USDCUSDT, DAIUSDT, BUSDUSDT)
     const stablecoinPairs = data
-      .filter(ticker => 
-        (ticker.symbol === 'USDCUSDT' || 
-         ticker.symbol === 'DAIUSDT' || 
-         ticker.symbol === 'BUSDUSDT' ||
-         ticker.symbol === 'TUSDUSDT' ||
-         ticker.symbol === 'USDPUSDT')
+      .filter(ticker =>
+      (ticker.symbol === 'USDCUSDT' ||
+        ticker.symbol === 'DAIUSDT' ||
+        ticker.symbol === 'BUSDUSDT' ||
+        ticker.symbol === 'TUSDUSDT' ||
+        ticker.symbol === 'USDPUSDT')
       )
       .map(ticker => ({
         symbol: ticker.symbol,
@@ -50,10 +50,10 @@ async function fetchBinancePrices() {
 async function updateCryptoPrices() {
   try {
     console.log('=============== PRICE UPDATE START ===============');
-    
+
     // Fetch both USDT and USD pairs
-    const pairs = await Pair.find({ 
-      quoteAsset: { $in: ['USDT', 'USD'] } 
+    const pairs = await Pair.find({
+      quoteAsset: { $in: ['USDT', 'USD'] }
     }).select('_id baseAsset quoteAsset category');
 
     if (pairs.length === 0) {
@@ -64,14 +64,14 @@ async function updateCryptoPrices() {
     console.log(`Found ${pairs.length} pairs in database`);
 
     const binanceData = await fetchBinancePrices();
-    
+
     // Create maps for both quote assets
     const binanceMapUSDT = new Map(
       binanceData
         .filter(item => item.quoteAsset === 'USDT')
         .map(item => [item.baseAsset, item])
     );
-    
+
     const binanceMapUSD = new Map(
       binanceData
         .filter(item => item.quoteAsset === 'USD')
@@ -88,14 +88,14 @@ async function updateCryptoPrices() {
 
     for (const pair of pairs) {
       let marketData = null;
-      
+
       // Select the correct map based on quote asset
       if (pair.quoteAsset === 'USDT') {
         marketData = binanceMapUSDT.get(pair.baseAsset);
       } else if (pair.quoteAsset === 'USD') {
         marketData = binanceMapUSD.get(pair.baseAsset);
       }
-      
+
       if (marketData) {
         bulkOps.push({
           updateOne: {
@@ -141,7 +141,7 @@ export function initializePriceUpdateTask(agenda) {
     await updateCryptoPrices();
   });
 
-  agenda.every('30 seconds', 'update-crypto-prices');
+  agenda.every('10 seconds', 'update-crypto-prices');
 
   console.log('=============== AGENDA TASK INITIALIZED ===============');
   console.log('Task: update-crypto-prices');

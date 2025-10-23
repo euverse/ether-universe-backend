@@ -34,6 +34,7 @@ export default defineNitroConfig({
       ethereum: process.env.ETHEREUM_MAINNET_RPC_URL,
       polygon: process.env.POLYGON_MAINNET_RPC_URL
     },
+    BINANCE_TICKER_URL: process.env.BINANCE_TICKER_URL,
     MONGODB_URI: process.env.MONGODB_URI,
     ABSTRACT_API_KEY: process.env.ABSTRACT_API_KEY
   }
