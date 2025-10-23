@@ -19,6 +19,7 @@ import orderSchema from "../schemas/Order.js";
 import notificationSchema from "../schemas/Notification.js";
 import adminBalanceSchema from "../schemas/AdminBalance.js";
 import blackListedIp from "../schemas/BlackListedIp.js";
+import priceDataSchema from "../schemas/PriceData.js";
 
 const MODELS_REGISTER = {
     AssetAllocation: model('AssetAllocation', assetAllocationSchema, 'assets allocations'),
@@ -40,7 +41,8 @@ const MODELS_REGISTER = {
     Network: model('Network', networkSchema),
     Order: model('Order', orderSchema),
     Notification: model('Notification', notificationSchema),
-    BlackListedIp: model('BlackListedIp', blackListedIp, 'blacklisted ips')
+    BlackListedIp: model('BlackListedIp', blackListedIp, 'blacklisted ips'),
+    PriceData: model('PriceData', priceDataSchema, 'price data')
 }
 
 export const getModel = (key) => {

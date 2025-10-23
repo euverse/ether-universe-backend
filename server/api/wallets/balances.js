@@ -1,5 +1,5 @@
 export default defineEventHandler(async (event) => {
-  const { accountId, includeZeroBalances = false } = getQuery(event);
+  const { accountId, includeZeroBalances = true } = getQuery(event);
   const tradingAccountId = accountId;
 
   if (!tradingAccountId) {

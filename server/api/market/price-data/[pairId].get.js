@@ -1,4 +1,3 @@
-
 // Convert interval string to seconds
 const intervalToSeconds = (interval) => {
   const intervals = {
@@ -12,82 +11,30 @@ const intervalToSeconds = (interval) => {
   return intervals[interval] || 3600;
 };
 
-// Map symbol to CoinGecko ID
-const getCoinGeckoId = (symbol) => {
-  const symbolMap = {
-    'BTC': 'bitcoin',
-    'ETH': 'ethereum',
-    'USDT': 'tether',
-    'BNB': 'binancecoin',
-    'SOL': 'solana',
-    'XRP': 'ripple',
-    'ADA': 'cardano',
-    'DOGE': 'dogecoin',
-    'MATIC': 'matic-network',
-    'DOT': 'polkadot'
-  };
-  return symbolMap[symbol.toUpperCase()] || symbol.toLowerCase();
-};
+// Aggregate cached 1m data to requested interval
+const aggregateToInterval = (dataSeries, interval, startTime, endTime) => {
+  if (!dataSeries?.length) return [];
 
-// Map quote asset to valid CoinGecko vs_currency
-const getVsCurrency = (quoteAsset) => {
-  const currencyMap = {
-    'USDT': 'usd',
-    'USDC': 'usd',
-    'BUSD': 'usd',
-    'USD': 'usd',
-    'EUR': 'eur',
-    'GBP': 'gbp',
-    'BTC': 'btc',
-    'ETH': 'eth'
-  };
-  return currencyMap[quoteAsset.toUpperCase()] || 'usd';
-};
+  // Filter data within time range
+  const filteredData = dataSeries.filter(
+    ([timestamp]) => timestamp >= startTime && timestamp <= endTime
+  );
 
-// Normalize timestamp to seconds
-const normalizeTimestamp = (ts) => {
-  return ts > 9999999999 ? Math.floor(ts / 1000) : ts;
-};
+  if (filteredData.length === 0) return [];
 
-// Fetch price data from CoinGecko
-const fetchCoinGeckoPriceData = async (coinId, vsCurrency, from, to) => {
-  try {
-    // Ensure timestamps are integers and in seconds
-    const fromSeconds = Math.floor(from);
-    const toSeconds = Math.floor(to);
-
-    const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart/range?vs_currency=${vsCurrency}&from=${fromSeconds}&to=${toSeconds}`;
-
-    const response = await $fetch(url);
-
-    if (!response?.prices) return [];
-
-    // CoinGecko returns [timestamp_ms, price]
-    // Convert to [timestamp_seconds, price] for consistency
-    return response.prices.map(([timestamp, price]) => [
-      Math.floor(timestamp / 1000), // Keep in seconds
-      price
-    ]);
-  } catch (error) {
-    console.error('CoinGecko API Error:', {
-      message: error.message,
-      data: error.data,
-      statusCode: error.statusCode
-    });
-    return [];
+  // If requesting 1m data, return as-is
+  if (interval === '1m') {
+    return filteredData;
   }
-};
-
-// Aggregate prices by interval
-const aggregatePriceData = (priceData, interval) => {
-  if (!priceData?.length) return [];
 
   const intervalSeconds = intervalToSeconds(interval);
   const buckets = {};
 
-  priceData.forEach(([timestamp, price]) => {
+  filteredData.forEach(([timestamp, price]) => {
     const bucket = Math.floor(timestamp / intervalSeconds) * intervalSeconds;
-    if (!buckets[bucket]) buckets[bucket] = [];
+    if (!buckets[bucket]) {
+      buckets[bucket] = [];
+    }
     buckets[bucket].push(price);
   });
 
@@ -96,14 +43,22 @@ const aggregatePriceData = (priceData, interval) => {
       Number(ts),
       prices.reduce((sum, p) => sum + p, 0) / prices.length
     ])
-    .sort((a, b) => a[0] - b[0]); // Sort by timestamp
+    .sort((a, b) => a[0] - b[0]);
+};
+
+// Normalize timestamp to seconds
+const normalizeTimestamp = (ts) => {
+  return ts > 9999999999 ? Math.floor(ts / 1000) : ts;
 };
 
 export default defineEventHandler(async (event) => {
   try {
     const pairId = getRouterParam(event, "pairId");
     if (!pairId) {
-      throw createError({ statusCode: 400, statusMessage: 'Pair ID is required' });
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Pair ID is required'
+      });
     }
 
     const query = getQuery(event);
@@ -125,21 +80,18 @@ export default defineEventHandler(async (event) => {
 
     const nowSeconds = Math.floor(Date.now() / 1000);
 
-    // Validate timestamps are not in the future
+    // Validate timestamps
     if (startTime > nowSeconds) {
       throw createError({
         statusCode: 400,
-        statusMessage: `startTime cannot be in the future. Received: ${startTime}, Current: ${nowSeconds}`
+        statusMessage: `startTime cannot be in the future`
       });
     }
 
     if (endTime > nowSeconds) {
-      console.warn(`endTime is in the future (${endTime}), adjusting to current time (${nowSeconds})`);
-      // Auto-adjust endTime to now instead of failing
       endTime = nowSeconds;
     }
 
-    // Validate time range
     if (startTime >= endTime) {
       throw createError({
         statusCode: 400,
@@ -147,12 +99,12 @@ export default defineEventHandler(async (event) => {
       });
     }
 
-    // CoinGecko has a 365-day limit for range queries
-    const maxRange = 365 * 24 * 60 * 60; // 365 days in seconds
+    // Validate time range (max 2 years)
+    const maxRange = 2 * 365 * 24 * 60 * 60;
     if (endTime - startTime > maxRange) {
       throw createError({
         statusCode: 400,
-        statusMessage: 'Time range cannot exceed 365 days'
+        statusMessage: 'Time range cannot exceed 2 years'
       });
     }
 
@@ -166,44 +118,72 @@ export default defineEventHandler(async (event) => {
       });
     }
 
+    // Get pair info
     const Pair = getModel('Pair');
     const pair = await Pair.findById(pairId);
 
     if (!pair) {
-      throw createError({ statusCode: 404, statusMessage: 'Trading pair not found' });
+      throw createError({
+        statusCode: 404,
+        statusMessage: 'Trading pair not found'
+      });
     }
 
-    const baseAsset = pair.baseAsset;
-    const quoteAsset = pair.quoteAsset;
-    const coinId = getCoinGeckoId(baseAsset);
-    const vsCurrency = getVsCurrency(quoteAsset);
+    // Get cached price data
+    const PriceData = getModel('PriceData');
+    const priceData = await PriceData.findOne({ pair: pairId });
 
-    let priceData = await fetchCoinGeckoPriceData(
-      coinId,
-      vsCurrency,
+    if (!priceData) {
+      throw createError({
+        statusCode: 404,
+        statusMessage: 'Price data not available for this pair'
+      });
+    }
+
+    // Record query for priority tracking (async, don't wait)
+    priceData.recordQuery().catch(err =>
+      console.error('Error recording query:', err)
+    );
+
+    // Check if data is initialized
+    if (!priceData.isInitialized || priceData.dataSeries.length === 0) {
+      return {
+        pairId: pair._id.toString(),
+        symbol: `${pair.baseAsset}/${pair.quoteAsset}`,
+        interval,
+        priceData: [],
+        message: 'Price data is being initialized. Please try again in a few minutes.'
+      };
+    }
+
+    // Aggregate cached data to requested interval
+    const aggregatedData = aggregateToInterval(
+      priceData.dataSeries,
+      interval,
       startTime,
       endTime
     );
 
-    if (!priceData.length) {
+    if (aggregatedData.length === 0) {
       return {
         pairId: pair._id.toString(),
-        symbol: `${baseAsset}/${quoteAsset}`,
+        symbol: `${pair.baseAsset}/${pair.quoteAsset}`,
         interval,
         priceData: [],
         message: 'No price data available for the specified range'
       };
     }
 
-    priceData = aggregatePriceData(priceData, interval);
-
     return {
       pairId: pair._id.toString(),
-      symbol: `${baseAsset}/${quoteAsset}`,
+      symbol: `${pair.baseAsset}/${pair.quoteAsset}`,
       interval,
-      dataPoints: priceData.length,
-      priceData
+      dataPoints: aggregatedData.length,
+      lastUpdated: priceData.lastUpdated,
+      cacheAge: nowSeconds - priceData.lastUpdated,
+      priceData: aggregatedData
     };
+
   } catch (error) {
     console.error('Price API Error:', error);
     throw createError({

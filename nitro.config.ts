@@ -23,10 +23,10 @@ export default defineNitroConfig({
         refreshTokenSecret: process.env.ADMIN_REFRESH_TOKEN_SECRET,
         accessTokenSecret: process.env.ADMIN_ACCESS_TOKEN_SECRET,
       },
-      credentials:{
-        adminFullName:process.env.ADMIN_FULLNAME,
-        adminEmail:process.env.ADMIN_EMAIL,
-        adminPassword:process.env.ADMIN_PASSWORD
+      credentials: {
+        adminFullName: process.env.ADMIN_FULLNAME,
+        adminEmail: process.env.ADMIN_EMAIL,
+        adminPassword: process.env.ADMIN_PASSWORD
       }
     },
     rpcUrls: {
@@ -35,8 +35,9 @@ export default defineNitroConfig({
       polygon: process.env.POLYGON_MAINNET_RPC_URL
     },
     BINANCE_TICKER_URL: process.env.BINANCE_TICKER_URL,
+    COIN_GECKO_API_KEY: process.env.COIN_GECKO_API_KEY,
     MONGODB_URI: process.env.MONGODB_URI,
-    ABSTRACT_API_KEY: process.env.ABSTRACT_API_KEY
+    ABSTRACT_API_KEY: process.env.ABSTRACT_API_KEY,
   }
 });
 

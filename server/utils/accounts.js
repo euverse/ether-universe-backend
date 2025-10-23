@@ -19,24 +19,6 @@ const getInitialPairs = async () => {
 };
 
 /**
- * HARDCODED: Demo account initial balances (human-readable)
- * These will be converted to smallest units when stored
- */
-const DEMO_INITIAL_BALANCES = {
-    USDT: {
-        [NETWORKS.ETHEREUM]: '10000.00',
-        [NETWORKS.POLYGON]: '5000.00'
-    },
-    ETH: {
-        [NETWORKS.ETHEREUM]: '5.00',
-        [NETWORKS.POLYGON]: '2.50'
-    },
-    BTC: {
-        [NETWORKS.BITCOIN]: '0.5'
-    }
-};
-
-/**
  * Initialize trading account with wallets and balances
  * This is the main function called when:
  * 1. New user signs up (creates DEMO account)
@@ -140,29 +122,6 @@ async function createBalances(wallets, accountId, isDemo) {
                 totalAllocated: '0',
                 totalWithdrawn: '0'
             });
-        }
-    }
-
-    // For demo accounts, add initial balances using proper utility functions
-    if (isDemo) {
-        for (const pair of initialPairs) {
-            const baseAsset = pair.baseAsset;
-            const networkBalances = DEMO_INITIAL_BALANCES[baseAsset];
-
-            if (networkBalances) {
-                for (const [network, amount] of Object.entries(networkBalances)) {
-                    // Skip if amount is '0' or empty
-                    if (!amount || amount === '0' || amount === '0.00') continue;
-
-                    // Use addInitialBalance utility (handles conversion to smallest units)
-                    await addInitialBalance(
-                        accountId,
-                        baseAsset,
-                        amount, // Human-readable amount
-                        network
-                    );
-                }
-            }
         }
     }
 }
