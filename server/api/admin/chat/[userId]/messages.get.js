@@ -1,3 +1,4 @@
+import { MESSAGE_TYPES } from "~/db/schemas/Chat";
 
 
 export default defineEventHandler(async event => {
@@ -47,6 +48,8 @@ export default defineEventHandler(async event => {
         {
             $group: {
                 _id: '$_id',
+                // Preserve the original 'user' field from the chat document
+                user: { $first: '$user' },
                 messages: { $push: '$messages' }
             }
         },
@@ -55,8 +58,24 @@ export default defineEventHandler(async event => {
         {
             $project: {
                 _id: 1,
+                user: 1, // Include the 'user' field
                 messages: { $reverseArray: '$messages' }
             }
+        },
+
+        // 💡 Add the $lookup stage here to populate the 'user' field
+        {
+            $lookup: {
+                from: 'users',
+                localField: 'user', // Field from the input documents (from the $group stage)
+                foreignField: '_id', // Field from the 'users' collection
+                as: 'user' // The name for the new array field to add to the input documents
+            }
+        },
+
+        // 💡 Add $unwind to de-array the 'user' field (since it's a one-to-one relationship)
+        {
+            $unwind: '$user'
         }
     ]);
 
@@ -69,12 +88,6 @@ export default defineEventHandler(async event => {
 
     const chat = result[0];
 
-    // Populate author references
-    await Chat.populate(chat.messages, {
-        path: 'author',
-        select: 'personalInfo fullName avatarUrl'
-    });
-
     // Map messages to desired format
     const formattedMessages = chat.messages.map(message => ({
         _id: message._id,
@@ -83,9 +96,10 @@ export default defineEventHandler(async event => {
         attachments: message.attachments || [],
         author: message.author ? {
             _id: message.author._id,
-            fullName: message.author.fullName ||
-                `${message.author.personalInfo?.firstName || ''} ${message.author.personalInfo?.lastName || ''}`.trim() || 'N/A',
-            avatarUrl: message.author.avatarUrl
+            ...(message.type == MESSAGE_TYPES.USER && {
+                fullName: user.personalInfo.firstName,
+                avatarUrl: user.avatarUrl
+            })
         } : null,
         createdAt: message.createdAt,
         deliveredAt: message.deliveredAt,

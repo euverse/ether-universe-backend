@@ -32,7 +32,11 @@ function validateNumber(value, paramName = 'number') {
  * @param {number} decimals - Token decimals
  * @throws {Error} If decimals is invalid
  */
-function validateDecimals(decimals) {
+export function validateDecimals(decimals) {
+  if (decimals === undefined || decimals === null) {
+    throw new Error(`Number is missing decimals configuration`);
+  }
+
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 30) {
     throw new Error(`Decimals must be an integer between 0 and 30, got: ${decimals}`);
   }
@@ -106,25 +110,38 @@ export function multiply(amount, multiplier) {
 }
 
 /**
+ * Calculate proportion as a decimal (for distribution calculations)
+ * Returns a precise decimal value, NOT in smallest units
+ * @param {string} part - Part amount in smallest units
+ * @param {string} whole - Whole amount in smallest units
+ * @returns {string} Decimal proportion (e.g., "0.3", "0.666666...")
+ */
+export function calculateProportion(part, whole) {
+  if (isZero(whole)) {
+    throw new Error('Cannot calculate proportion with zero whole');
+  }
+  const partBn = validateNumber(part, 'part');
+  const wholeBn = validateNumber(whole, 'whole');
+
+  // Return as decimal string with full precision
+  return partBn.dividedBy(wholeBn).toString();
+}
+
+/**
  * Divide amount in smallest units by a divisor
- * IMPORTANT: Result is rounded down to maintain integer smallest units
- * This may result in precision loss for non-exact divisions
+ * Result is rounded down to maintain integer smallest units
  * @param {string} amount - Amount in smallest units
  * @param {string|number} divisor - Divisor
  * @returns {string} Result in smallest units (rounded down)
  */
 export function divide(amount, divisor) {
-  if (isZero(divisor)) {
-    throw new Error('Cannot divide by zero');
-  }
+  // Reuse calculateProportion logic, just format as integer
+  const proportion = calculateProportion(amount, divisor);
+  const bn = validateNumber(proportion, 'proportion');
 
-  const bn = validateNumber(amount, 'amount');
-  const div = validateNumber(divisor, 'divisor');
-
-  // Divide and round down to maintain integer smallest units
-  return bn.dividedBy(div).integerValue(BigNumber.ROUND_DOWN).toFixed(0);
+  // Round down to maintain integer smallest units
+  return bn.integerValue(BigNumber.ROUND_DOWN).toFixed(0);
 }
-
 
 /**
  * Calculate percentage of an amount
@@ -182,6 +199,16 @@ export function isPositive(amount) {
 }
 
 /**
+ * Validate amount is positive
+ */
+export function validatePositiveAmount(amount, fieldName = 'amount') {
+  if (!isPositive(amount)) {
+    throw new Error(`${fieldName} must be positive, got: ${amount}`);
+  }
+}
+
+
+/**
  * Get minimum of two amounts
  */
 export function min(amount1, amount2) {
@@ -194,3 +221,5 @@ export function min(amount1, amount2) {
 export function max(amount1, amount2) {
   return compare(amount1, amount2) >= 0 ? amount1 : amount2;
 }
+
+

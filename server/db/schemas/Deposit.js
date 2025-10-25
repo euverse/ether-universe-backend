@@ -1,13 +1,11 @@
-// ============================================
-// SIMPLIFIED DEPOSIT SCHEMA (Balance-Based)
-// ============================================
 import { Schema } from "mongoose";
 import { NETWORKS } from "./Network";
 
 export const DEPOSIT_STATUS = {
-  PENDING: 'pending',    // Detected on-chain, ready to be swept
-  SWEPT: 'swept',        // Funds swept to admin wallet
-  FAILED: 'failed'       // Failed to sweep
+  PENDING: 'pending',      // Detected on-chain, ready to be swept
+  PROCESSING: 'processing', // Currently being swept (prevents concurrent sweeps)
+  SWEPT: 'swept',          // Successfully swept to admin wallet
+  FAILED: 'failed'         // Failed to sweep (will be retried)
 };
 
 const depositSchema = new Schema({
@@ -36,22 +34,26 @@ const depositSchema = new Schema({
     ref: 'Pair',
     required: true
   },
-  // Amount in human-readable format (e.g., "10.5" ETH)
+
+  // Deposit amounts - detected on-chain
   amount: {
     type: String,
     required: true
   },
-  // Amount in smallest units (wei/satoshi) - for calculations
   amountSmallest: {
     type: String,
     required: true
   },
+
+  // Status tracking
   status: {
     type: String,
     enum: Object.values(DEPOSIT_STATUS),
-    default: DEPOSIT_STATUS.PENDING
+    default: DEPOSIT_STATUS.PENDING,
+    required: true
   },
-  // Sweep tracking
+
+  // Sweep tracking - for successful sweeps
   sweptAt: Date,
   sweepTxHash: {
     type: String,
@@ -61,21 +63,35 @@ const depositSchema = new Schema({
     type: Schema.Types.ObjectId,
     ref: 'AdminWallet'
   },
-  // Failure tracking
-  failedReason: String,
+
+  // Actual swept amounts (may differ from detected amount due to gas/fees)
+  actualSweptAmount: String,              // Human-readable
+  actualSweptAmountSmallest: String,      // In smallest units
+
+  // Fee tracking (especially important for Bitcoin)
+  sweepFee: Number,          // Fee in smallest units (wei/satoshi)
+  sweepFeeRate: Number,      // For Bitcoin: sat/vB, For EVM: gwei
+
+  // Failure tracking - for retry mechanism
+  failureReason: String,
   failedAt: Date,
-  // Detection timestamp
-  detectedAt: {
-    type: Date,
-    default: Date.now
-  }
+  retryCount: {
+    type: Number,
+    default: 0
+  },
+
+  // Critical error flag - for accounting mismatches
+  accountingError: String,   // Set when sweep succeeds but accounting fails
+
 }, {
   timestamps: true
 });
 
-// Indexes - optimized for balance-based scanning
-depositSchema.index({ wallet: 1, network: 1, pair: 1, status: 1 });
-depositSchema.index({ status: 1, createdAt: -1 });
-depositSchema.index({ tradingAccount: 1, status: 1 });
+// Indexes - optimized for balance-based scanning and sweep operations
+depositSchema.index({ wallet: 1, pair: 1, network: 1, status: 1 });  // For getPendingDepositAmount
+depositSchema.index({ status: 1, network: 1 });                       // For sweeping operations
+depositSchema.index({ status: 1, retryCount: 1, failedAt: 1 });      // For retry mechanism
+depositSchema.index({ tradingAccount: 1, status: 1 });                // For user queries
+depositSchema.index({ wallet: 1, pair: 1, network: 1, amountSmallest: 1, createdAt: -1 }); // For duplicate detection
 
 export default depositSchema;

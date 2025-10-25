@@ -1,13 +1,11 @@
 
 export default defineEventHandler(async (event) => {
-    const { admin } = event.context.auth;
-
     try {
         const User = getModel('User');
         const KYCSubmission = getModel('KYCSubmission');
         const Balance = getModel('Balance');
-        const Transaction = getModel('Transaction');
-        
+        const UserWithdrawal = getModel('UserWithdrawal');
+
         const now = new Date();
         const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
@@ -66,18 +64,19 @@ export default defineEventHandler(async (event) => {
         const totalAssetsYesterday = balancesYesterday.length > 0 ? balancesYesterday[0].totalBalanceUsd : 0;
         const assetsPercentage = calculatePercentage(totalAssetsUsd, totalAssetsYesterday);
 
-        const pendingWithdrawals = await Transaction.countDocuments({
+        const pendingWithdrawals = await UserWithdrawal.countDocuments({
             type: 'withdrawal',
             status: 'pending'
         });
-        const withdrawalsYesterday = await Transaction.countDocuments({
+        
+        const withdrawalsYesterday = await UserWithdrawal.countDocuments({
             type: 'withdrawal',
             status: 'pending',
             createdAt: { $lte: yesterday }
         });
         const withdrawalsPercentage = calculatePercentage(pendingWithdrawals, withdrawalsYesterday);
 
-    
+
         const frozenUsers = await User.countDocuments({
             accountStatus: 'frozen'
         });

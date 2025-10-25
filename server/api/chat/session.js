@@ -1,10 +1,11 @@
 import { createError } from "h3";
+import { MESSAGE_TYPES } from "../../db/schemas/Chat";
 
 export default defineEventHandler(async event => {
     const sessionUser = event.context.auth.user;
     const User = getModel('User');
 
-    const user = await User.findById(sessionUser?._id).select('fullName avatarUrl');
+    const user = await User.findById(sessionUser?._id);
 
     if (!user) {
         throw createError({
@@ -13,8 +14,27 @@ export default defineEventHandler(async event => {
         });
     }
 
+    const userId = sessionUser?._id;
+    const Chat = getModel('Chat');
+
+    const chat = await Chat.findOneAndUpdate(
+        { user: userId },
+        { $setOnInsert: { user: userId } },
+        {
+            new: true,
+            upsert: true,
+            // The aggregation pipeline is passed as the third argument here
+            pipeline: [
+                // Stage 1: Slice the 'messages' array to keep only the last 20 elements
+                { $set: { messages: { $slice: ['$messages', -20] } } },
+                // Stage 2: Project the final document shape
+                { $project: { user: 1, notes: 1, messages: 1 } }
+            ]
+        }
+    ).exec();
+
     const Admin = getModel("Admin");
-    const admin = Admin.findOne().select("_id fullName avatarUrl")
+    const admin = await Admin.findOne().select("_id fullName avatarUrl")
 
     if (!admin) {
         throw createError({
@@ -23,64 +43,16 @@ export default defineEventHandler(async event => {
         })
     }
 
-    const userId = sessionUser?._id;
-    const Chat = getModel('Chat');
-
-    // Use aggregation pipeline in findOneAndUpdate for efficient slicing
-    const chat = await Chat.findOneAndUpdate(
-        { user: userId },
-        { $setOnInsert: { user: userId } },
-        {
-            upsert: true,
-            new: true
-        }
-    ).then(async (chat) => {
-        // Use aggregation to get only last 6 messages
-        const result = await Chat.aggregate([
-            { $match: { _id: chat._id } },
-            {
-                $project: {
-                    user: 1,
-                    notes: 1,
-                    messages: { $slice: ['$messages', -6] }
-                }
-            }
-        ]);
-
-        // Populate the result
-        await Chat.populate(result[0], [
-            {
-                path: 'user',
-                select: '_id personalInfo avatarUrl'
-            },
-            {
-                path: 'messages.author',
-                select: 'personalInfo fullName avatarUrl'
-            }
-        ]);
-
-        return result[0];
-    });
-
-    // Safety check
-    if (!chat || !chat.user) {
-        throw createError({
-            statusCode: 404,
-            message: 'Chat or user not found'
-        });
-    }
-
+    const adminFirstName = admin.fullName.split(' ')[0]
 
     return {
         otherUser: {
             _id: admin._id,
-            fullName: admin.fullName,
+            fullName: adminFirstName,
             avatarUrl: admin.avatarUrl,
         },
         currentUser: {
-            _id: chat.user._id,
-            fullName: `${chat.user.personalInfo?.firstName || 'Not Set'} ${chat.user.personalInfo?.lastName || 'Not Set'}`,
-            avatarUrl: chat.user.avatarUrl,
+            _id: user._id,
         },
         messages: chat.messages?.map(message => ({
             _id: message._id,
@@ -88,9 +60,10 @@ export default defineEventHandler(async event => {
             attachments: message.attachments || [],
             author: {
                 _id: message.author._id,
-                fullName: message?.author.fullName ||
-                    `${message?.author.personalInfo?.firstName || ''} ${message?.author.personalInfo?.lastName || ''}`.trim() || 'N/A',
-                avatarUrl: message.author.avatarUrl,
+                ...(message.type == MESSAGE_TYPES.ADMIN && {
+                    fullName: adminFirstName,
+                    avatarUrl: admin.avatarUrl
+                })
             },
             createdAt: message.createdAt,
             deliveredAt: message.deliveredAt,

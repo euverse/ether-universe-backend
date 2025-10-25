@@ -2,29 +2,6 @@ const Pair = getModel('Pair');
 const Wallet = getModel('Wallet');
 const Balance = getModel('Balance');
 
-// VALIDATION UTILITIES
-
-/**
- * Validate amount is positive
- */
-export function validatePositiveAmount(amount, fieldName = 'amount') {
-  if (!isPositive(amount)) {
-    throw new Error(`${fieldName} must be positive, got: ${amount}`);
-  }
-}
-
-/**
- * Validate pair has decimals
- */
-function validatePairDecimals(pair) {
-  if (pair.decimals === undefined || pair.decimals === null) {
-    throw new Error(`Pair ${pair.symbol || pair.baseAsset} is missing decimals configuration`);
-  }
-  if (!Number.isInteger(pair.decimals) || pair.decimals < 0 || pair.decimals > 30) {
-    throw new Error(`Invalid decimals for pair ${pair.symbol || pair.baseAsset}: ${pair.decimals}`);
-  }
-}
-
 // BALANCE FORMATTING UTILITIES
 
 /**
@@ -35,7 +12,7 @@ function formatGroupedBalances(grouped) {
   const formatted = {};
 
   for (const [pairSymbol, data] of Object.entries(grouped)) {
-    validatePairDecimals(data.pair);
+    validateDecimals(data.pair.decimals);
     const decimals = data.pair.decimals;
 
     formatted[pairSymbol] = {
@@ -72,9 +49,9 @@ function formatGroupedBalances(grouped) {
  * Returns human-readable amounts
  */
 export async function getBalancesByPair(tradingAccountId, { includeZeroBalances = true } = {}) {
-  const wallets = await Wallet.find({ tradingAccount: tradingAccountId });
+  const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();
 
-  if (!wallets || wallets.length === 0) {
+  if (wallets.length === 0) {
     return {}; // No wallets = no balances
   }
 
@@ -92,7 +69,7 @@ export async function getBalancesByPair(tradingAccountId, { includeZeroBalances 
     })
   }).populate('pair');
 
-  if (!balances || balances.length === 0) {
+  if (balances.length === 0) {
     return {}; // No balances found
   }
 
@@ -150,12 +127,12 @@ export async function getBalancesByPair(tradingAccountId, { includeZeroBalances 
 export async function getTotalBalanceForPair(tradingAccountId, baseAsset) {
   const pair = await Pair.findOne({ baseAsset });
   if (!pair) {
-    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
+    throw Error(`Pair ${baseAsset} not found`)
   }
 
-  validatePairDecimals(pair);
+  validateDecimals(pair.decimals);
 
-  const wallets = await Wallet.find({ tradingAccount: tradingAccountId });
+  const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();
   const walletIds = wallets.map(w => w._id);
 
   const balances = await Balance.find({
@@ -223,85 +200,44 @@ export async function getTotalBalanceForPair(tradingAccountId, baseAsset) {
 // BALANCE MODIFICATION FUNCTIONS
 
 /**
- * Add initial balance (first deposit for a pair)
- * Input: human-readable amount, Output: human-readable result
- */
-export async function addInitialBalance(
-  tradingAccountId,
-  baseAsset,
-  amount, // human-readable (e.g., "10.5")
-  targetNetwork
-) {
-  validatePositiveAmount(amount, 'amount');
-
-  const pair = await Pair.findOne({ baseAsset });
-  if (!pair) {
-    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
-  }
-
-  validatePairDecimals(pair);
-
-  const amountSmallest = toSmallestUnit(amount, pair.decimals);
-
-  const wallets = await Wallet.find({ tradingAccount: tradingAccountId });
-  const walletIds = wallets.map(w => w._id);
-
-  const balance = await Balance.findOne({
-    wallet: { $in: walletIds },
-    pair: pair._id,
-    network: targetNetwork
-  });
-
-  if (!balance) {
-    throw new Error(`No balance record found for network: ${targetNetwork}`);
-  }
-
-  balance.initial = add(balance.initial, amountSmallest);
-  balance.available = add(balance.available, amountSmallest);
-  balance.totalDeposited = add(balance.totalDeposited, amountSmallest);
-  balance.lastDepositAt = new Date();
-
-  await balance.save();
-
-  return {
-    network: targetNetwork,
-    amount: toReadableUnit(amountSmallest, pair.decimals),
-    balanceId: balance._id
-  };
-}
-
-/**
- * Add deposit (subsequent deposits)
+ * Add deposit (predeposited (eg in demos) or user deposits or orders)
  * Input: human-readable amount, Output: human-readable result
  */
 export async function addDeposit(
   tradingAccountId,
   baseAsset,
   amount, // human-readable
-  targetNetwork
+  targetNetwork = null,
+  { preDeposited = false } = {}
 ) {
   validatePositiveAmount(amount, 'amount');
 
   const pair = await Pair.findOne({ baseAsset });
   if (!pair) {
-    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
+    throw Error(`Pair ${baseAsset} not found`)
   }
 
-  validatePairDecimals(pair);
+  validateDecimals(pair.decimals);
 
   const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
-  const wallets = await Wallet.find({ tradingAccount: tradingAccountId });
+  const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();;
   const walletIds = wallets.map(w => w._id);
 
   const balance = await Balance.findOne({
     wallet: { $in: walletIds },
     pair: pair._id,
-    network: targetNetwork
+    ...(targetNetwork && {
+      network: targetNetwork
+    })
   });
 
   if (!balance) {
     throw new Error(`No balance record found for network: ${targetNetwork}`);
+  }
+
+  if (preDeposited) {
+    balance.initial = add(balance.initial, amountSmallest);
   }
 
   balance.available = add(balance.available, amountSmallest);
@@ -331,22 +267,22 @@ export async function removeWithdrawal(
 
   const pair = await Pair.findOne({ baseAsset });
   if (!pair) {
-    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
+    throw Error(`Pair ${baseAsset} not found`)
   }
 
-  validatePairDecimals(pair);
+  validateDecimals(pair.decimals);
 
   const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
-  const wallets = await Wallet.find({ tradingAccount: tradingAccountId });
+  const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();
   const walletIds = wallets.map(w => w._id);
 
   let balances = await Balance.find({
     wallet: { $in: walletIds },
-    pair: pair._id
+    pair: pair._id,
   }).sort({ available: -1 });
 
-  if (!balances || balances.length === 0) {
+  if (balances.length === 0) {
     throw new Error(`No balance records found for pair: ${baseAsset}`);
   }
 
@@ -383,7 +319,7 @@ export async function removeWithdrawal(
   for (const balance of balances) {
     if (compare(remaining, '0') <= 0) break;
 
-    if (compare(balance.available, '0') <= 0) continue;
+    if (compare(balance.available, '0') <= 0) continue; //skip zero balances
 
     const toRemove = min(balance.available, remaining);
 
@@ -417,7 +353,7 @@ export async function removeWithdrawal(
  * Lock balance for an order
  * Input: human-readable amount, Output: distributions in smallest units (for settlement)
  */
-export async function lockBalanceForOrder(
+export async function lockAssetBalances(
   tradingAccountId,
   baseAsset,
   amount, // human-readable
@@ -427,14 +363,13 @@ export async function lockBalanceForOrder(
 
   const pair = await Pair.findOne({ baseAsset });
   if (!pair) {
-    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
+    throw Error(`Pair ${baseAsset} not found`);
   }
 
-  validatePairDecimals(pair);
-
+  validateDecimals(pair.decimals);
   const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
-  const wallets = await Wallet.find({ tradingAccount: tradingAccountId });
+  const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();
   const walletIds = wallets.map(w => w._id);
 
   let balances = await Balance.find({
@@ -442,7 +377,7 @@ export async function lockBalanceForOrder(
     pair: pair._id
   }).sort({ available: -1 });
 
-  if (!balances || balances.length === 0) {
+  if (balances.length === 0) {
     throw new Error(`No balance records found for pair: ${baseAsset}`);
   }
 
@@ -455,72 +390,53 @@ export async function lockBalanceForOrder(
     });
   }
 
+  // PHASE 1: Calculate distribution WITHOUT modifying anything
   let remaining = amountSmallest;
-  const locked = [];
+  const plannedLocks = [];
 
-  // Lock from balances until we have enough
   for (const balance of balances) {
     if (compare(remaining, '0') <= 0) break;
-
     if (compare(balance.available, '0') <= 0) continue;
 
     const toLock = min(balance.available, remaining);
 
-    balance.available = subtract(balance.available, toLock);
-    balance.locked = add(balance.locked, toLock);
-    balance.totalAllocated = add(balance.totalAllocated, toLock);
-    balance.lastAllocatedAt = new Date();
-
-    await balance.save();
-
-    locked.push({
+    plannedLocks.push({
       balanceId: balance._id,
       network: balance.network,
-      amount: toLock // Keep in smallest units for settlement
+      amount: toLock
     });
 
     remaining = subtract(remaining, toLock);
   }
 
+  // PHASE 2: Verify we have enough BEFORE making any changes
   if (compare(remaining, '0') > 0) {
-    // Rollback - attempt to undo all locks
-    const rollbackErrors = [];
-
-    for (const item of locked) {
-      try {
-        const balance = await Balance.findById(item.balanceId);
-        if (balance) {
-          balance.available = add(balance.available, item.amount);
-          balance.locked = subtract(balance.locked, item.amount);
-          balance.totalAllocated = subtract(balance.totalAllocated, item.amount);
-          await balance.save();
-        } else {
-          rollbackErrors.push(`Balance ${item.balanceId} not found during rollback`);
-        }
-      } catch (error) {
-        rollbackErrors.push(`Failed to rollback balance ${item.balanceId}: ${error.message}`);
-      }
-    }
-
-    if (rollbackErrors.length > 0) {
-      throw new Error(
-        `Insufficient balance AND rollback failed. Required: ${amount}, Missing: ${toReadableUnit(remaining, pair.decimals)}. Rollback errors: ${rollbackErrors.join('; ')}`
-      );
-    }
-
     throw new Error(
       `Insufficient balance. Required: ${amount}, Missing: ${toReadableUnit(remaining, pair.decimals)}`
     );
   }
 
+  // PHASE 3: Now apply all locks (we know we have enough)
+  for (const planned of plannedLocks) {
+    const balance = await Balance.findById(planned.balanceId);
+    if (!balance) {
+      throw new Error(`Balance ${planned.balanceId} not found`);
+    }
+
+    balance.available = subtract(balance.available, planned.amount);
+    balance.locked = add(balance.locked, planned.amount);
+    balance.lastLockedAt = new Date();
+    await balance.save();
+  }
+
   return {
     totalLocked: toReadableUnit(amountSmallest, pair.decimals),
-    distributions: locked // Keep in smallest units for settlement
+    distributions: plannedLocks // Keep in smallest units for settlement
   };
 }
 
 /**
- * Unlock balance (when order is cancelled)
+ * Unlock balance (eg when order is cancelled or funds unfreezed)
  * Input: distributions in smallest units from lockBalanceForOrder
  */
 export async function unlockBalance(baseAsset, distributions) {
@@ -530,27 +446,37 @@ export async function unlockBalance(baseAsset, distributions) {
 
   const pair = await Pair.findOne({ baseAsset });
   if (!pair) {
-    throw createError({ statusCode: 404, message: `Pair ${baseAsset} not found` });
+    throw Error(`Pair ${baseAsset} not found`);
   }
 
-  validatePairDecimals(pair);
+  validateDecimals(pair.decimals);
 
   const errors = [];
+  let totalUnlocked = '0';
 
   for (const dist of distributions) {
     try {
       const balance = await Balance.findById(dist.balanceId);
-
       if (!balance) {
         errors.push(`Balance ${dist.balanceId} not found - funds may be permanently locked`);
+        continue;
+      }
+
+      // Before subtracting, verify sufficient locked balance
+      if (!isGreaterOrEqual(balance.locked, dist.amount)) {
+        errors.push(
+          `Insufficient locked balance ${dist.balanceId}. ` +
+          `Locked: ${balance.locked}, Attempting to unlock: ${dist.amount}`
+        );
         continue;
       }
 
       balance.locked = subtract(balance.locked, dist.amount);
       balance.available = add(balance.available, dist.amount);
       balance.lastUnlockedAt = new Date();
-
       await balance.save();
+
+      totalUnlocked = add(totalUnlocked, dist.amount);
     } catch (error) {
       errors.push(`Failed to unlock balance ${dist.balanceId}: ${error.message}`);
     }
@@ -560,5 +486,7 @@ export async function unlockBalance(baseAsset, distributions) {
     throw new Error(`Unlock completed with errors: ${errors.join('; ')}`);
   }
 
-  return { success: true };
+  return {
+    totalUnlocked: toReadableUnit(totalUnlocked, pair.decimals)
+  };
 }

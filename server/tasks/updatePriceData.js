@@ -384,8 +384,8 @@ export function initializePriceDataTasks(agenda) {
 
     // Schedule tasks
     agenda.every('10 minutes', 'initialize-price-data');
-    agenda.every('2 minutes', 'update-high-priority-pairs');
-    agenda.every('15 minutes', 'update-all-pairs');
+    agenda.every('35 minutes', 'update-high-priority-pairs');
+    agenda.every('2 hours', 'update-all-pairs');
 
     console.log('=============== PRICE DATA TASKS INITIALIZED ===============');
     console.log('Task: initialize-price-data - Every 10 minutes');

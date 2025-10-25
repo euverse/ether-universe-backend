@@ -28,7 +28,7 @@ export default defineEventHandler(async (event) => {
 
         const skip = (page - 1) * limit;
         const users = await User.find(filter)
-            .select('firstName lastName email walletAddress accountStatus createdAt lastLoginAt')
+            .select('personalInfo.firstName personalInfo.lastName email auth.status createdAt auth.lastLoggedInAt')
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit)
@@ -38,30 +38,15 @@ export default defineEventHandler(async (event) => {
         const totalPages = Math.ceil(totalItems / limit);
 
         const enrichedUsers = await Promise.all(users.map(async (user) => {
-            let kycData = {
-                status: 'notSubmitted',
-                imageType: null,
-                fileType: null,
-                submittedAt: null,
-                approvedAt: null
-            };
+
+            let kycStatus = 'notSubmitted'
 
             const kycSubmission = await KYCSubmission.findOne({ user: user._id })
                 .sort({ createdAt: -1 })
                 .lean();
 
             if (kycSubmission) {
-                kycData = {
-                    status: kycSubmission.status,
-                    imageType: kycSubmission.documentType,
-                    fileType: 'image',
-                    submittedAt: kycSubmission.createdAt,
-                    approvedAt: kycSubmission.approvedAt || null
-                };
-            }
-
-            if (kycStatus && kycData.status !== kycStatus) {
-                return null;
+                kycStatus = kycSubmission.status
             }
 
             const balances = await Balance.find({ userId: user._id }).lean();
@@ -69,22 +54,26 @@ export default defineEventHandler(async (event) => {
                 return sum + parseFloat(balance.balanceUsd || 0);
             }, 0);
 
-            const allocatedAmountUsd = 0; 
+            const allocatedAmountUsd = 0;
 
-            const unreadMessages = 0; 
+            const Chat = getModel('Chat');
+
+            const unreadMessages = (await Chat.findOne({ user: user._id }).select('messages').lean())
+                .messages.filter(message => !message.seenAt)
+                .length;
+
+            const userFullName = user.personalInfo?.firstName ? `${user.personalInfo?.firstName} ${user.personalInfo?.lastName || ''}` : 'Unverified User';
 
             return {
                 _id: user._id,
-                fullName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'N/A',
-                email: user.email || 'N/A',
-                walletAddress: user.walletAddress,
-                kyc: kycData,
+                fullName: userFullName,
+                kycStatus,
                 allocatedAmountUsd: Math.round(allocatedAmountUsd),
-                accountStatus: user.accountStatus || 'active',
+                userStatus: user.auth.status || 'active',
                 balanceUsd: Math.round(totalBalanceUsd),
                 unreadMessages,
                 createdAt: user.createdAt,
-                lastLogin: user.lastLoginAt || user.createdAt
+                lastLogin: user.auth.lastLoggedInAt
             };
         }));
 

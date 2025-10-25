@@ -70,6 +70,10 @@ const orderSchema = new Schema({
   minPrice: {
     type: Number
   },
+  cancelledAt: {
+    type: Date,
+    default: null
+  },
   openedAt: {
     type: Date,
     required: true
@@ -99,7 +103,9 @@ const orderSchema = new Schema({
     default: 0
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  toObject: { virtuals: true },
+  toJSON: { virtuals: true }
 });
 
 // Indexes for performance
@@ -108,11 +114,22 @@ orderSchema.index({ tradingAccount: 1, closedAt: -1 });
 orderSchema.index({ status: 1, openedAt: 1 });
 
 /**
+ * Virtual for position size
+ */
+orderSchema.virtual('positionSize').get(function () {
+  return this.amountUsdt * this.leverage;
+});
+
+/**
  * Virtual for calculating floating PnL on open orders
  * Compares current price to entry price
  */
 orderSchema.virtual('floatingPnl').get(async function () {
-  if (this.status !== ORDER_STATUSES.OPEN) {
+  if (this.status === ORDER_STATUSES.PENDING) {
+    return null;
+  }
+
+  if (this.status !== ORDER_STATUSES.CLOSED) {
     return this.pnl; // Return actual PnL for closed orders
   }
 
@@ -128,12 +145,13 @@ orderSchema.virtual('floatingPnl').get(async function () {
 
     let floatingPnl = 0;
 
+    const positionSize = this.amountUsdt * this.leverage;
     if (this.type === ORDER_TYPES.LONG) {
       // Long: profit when price goes up
-      floatingPnl = (this.amountUsdt * this.leverage * priceChangePercent) / 100;
+      floatingPnl = (positionSize * priceChangePercent) / 100;
     } else {
       // Short: profit when price goes down
-      floatingPnl = (this.amountUsdt * this.leverage * -priceChangePercent) / 100;
+      floatingPnl = (positionSize * -priceChangePercent) / 100;
     }
 
     // Subtract fee from floating PnL
@@ -143,12 +161,6 @@ orderSchema.virtual('floatingPnl').get(async function () {
   }
 });
 
-/**
- * Virtual for position size
- */
-orderSchema.virtual('positionSize').get(function () {
-  return this.amountUsdt * this.leverage;
-});
 
 /**
  * Virtual for total locked amount (human-readable)
@@ -157,7 +169,5 @@ orderSchema.virtual('totalLocked').get(function () {
   return this.amountUsdt + (this.fee || 0);
 });
 
-orderSchema.set('toJSON', { virtuals: true });
-orderSchema.set('toObject', { virtuals: true });
 
 export default orderSchema;

@@ -6,63 +6,100 @@ const Order = getModel("Order")
 const Balance = getModel("Balance")
 
 /**
- * Settle order (when order closes)
- * Input: human-readable profit/loss, distributions in smallest units
- * Output: human-readable result
+ * Distribute PnL across balances proportionally
+ * Input: distributions in smallest units, human-readable PnL
  */
-export async function settleOrder(
+export async function distributePnL(
     baseAsset,
-    lockedDistributions, // in smallest units from lockBalanceForOrder
+    distributions, // Same distributions from lock
     profitOrLoss, // human-readable
     isProfit
 ) {
-    const pair = await Pair.findOne({ baseAsset });
-    if (!pair) {
-        throw createError({ statusCode: 404, message: `${baseAsset} not found` });
+
+    if (isZero(Math.abs(profitOrLoss))) {
+        throw Error('profitOrLoss must not be zero')
     }
 
-    const profitOrLossSmallest = toSmallestUnit(Math.abs(profitOrLoss), pair.decimals);
+    const pair = await Pair.findOne({ baseAsset });
+    if (!pair) {
+        throw Error(`Pair ${baseAsset} not found`);
+    }
 
-    // First, unlock the original locked amounts
-    for (const dist of lockedDistributions) {
-        const balance = await Balance.findById(dist.balanceId);
-        if (!balance) continue;
+    validateDecimals(pair.decimals);
+    const pnlSmallest = toSmallestUnit(Math.abs(profitOrLoss), pair.decimals);
 
-        balance.locked = subtract(balance.locked, dist.amount);
+    // Calculate total locked for proportional distribution
+    const totalLocked = distributions.reduce((sum, d) => add(sum, d.amount), '0');
 
-        if (isProfit) {
-            // Add back unlocked + proportional profit
-            const totalLocked = lockedDistributions.reduce((sum, d) => add(sum, d.amount), '0');
-            const proportion = new BigNumber(dist.amount).dividedBy(totalLocked);
-            const profitShare = multiply(profitOrLossSmallest, proportion.toString());
+    const errors = [];
+    let totalDistributed = '0';
 
-            const totalReturn = add(dist.amount, profitShare);
-            balance.available = add(balance.available, totalReturn);
-        } else {
-            // Calculate proportional loss
-            const totalLocked = lockedDistributions.reduce((sum, d) => add(sum, d.amount), '0');
-            const proportion = new BigNumber(dist.amount).dividedBy(totalLocked);
-            const lossShare = multiply(profitOrLossSmallest, proportion.toString());
+    for (const dist of distributions) {
+        try {
+            const balance = await Balance.findById(dist.balanceId);
+            if (!balance) {
+                errors.push(`Balance ${dist.balanceId} not found`);
+                continue;
+            }
 
-            // Add back unlocked minus loss
-            const remaining = subtract(dist.amount, lossShare);
-            balance.available = add(balance.available, remaining);
+            // Calculate proportional share - multiply already handles rounding
+            const proportion = calculateProportion(dist.amount, totalLocked);
+            const pnlShare = multiply(pnlSmallest, proportion);
+
+            if (isProfit) {
+                balance.available = add(balance.available, pnlShare);
+                balance.totalPnL = add(balance.totalPnL, pnlShare);
+            } else {
+                balance.available = subtract(balance.available, pnlShare);
+                balance.totalPnL = subtract(balance.totalPnL, pnlShare);
+            }
+
+            balance.lastSettledAt = new Date();
+            await balance.save();
+
+            totalDistributed = add(totalDistributed, pnlShare);
+        } catch (error) {
+            errors.push(`Failed to distribute PnL to balance ${dist.balanceId}: ${error.message}`);
         }
+    }
 
-        await balance.save();
+    if (errors.length > 0) {
+        throw new Error(`PnL distribution completed with errors: ${errors.join('; ')}`);
     }
 
     return {
-        success: true,
-        settled: lockedDistributions.length,
-        profitOrLoss: toReadableUnit(profitOrLossSmallest, pair.decimals),
+        totalDistributed: toReadableUnit(totalDistributed, pair.decimals),
         isProfit
     };
 }
 
-// ============================================
+/**
+ * Settle order (when order closes)
+ * Unlocks funds and distributes PnL
+ */
+export async function settleOrder(
+    baseAsset,
+    lockedDistributions,
+    profitOrLoss, // human-readable
+    isProfit
+) {
+    // Step 1: Unlock original amounts
+    const unlockResult = await unlockBalance(baseAsset, lockedDistributions);
+
+    // Step 2: Distribute PnL if any
+    let pnlResult = null;
+    if (profitOrLoss !== 0) {
+        pnlResult = await distributePnL(baseAsset, lockedDistributions, profitOrLoss, isProfit);
+    }
+
+    return {
+        totalUnlocked: unlockResult.totalUnlocked,
+        totalPnL: pnlResult?.totalDistributed || '0',
+        isProfit
+    };
+}
+
 // ORDER MANAGEMENT FUNCTIONS
-// ============================================
 
 /**
  * Place a new order
@@ -81,7 +118,7 @@ export async function placeOrder(
     // Lock balance for this order (amount + fee)
     const totalCost = parseFloat(amountUsdt) + parseFloat(fee);
 
-    const locked = await lockBalanceForOrder(
+    const locked = await lockAssetBalances(
         tradingAccountId,
         "USDT",
         totalCost.toString()
@@ -126,7 +163,7 @@ export async function cancelOrder(orderId) {
         throw new Error('Order not found');
     }
 
-    if (order.status !== ORDER_STATUSES.OPEN) {
+    if (order.status !== ORDER_STATUSES.PENDING) {
         throw new Error(`Cannot cancel order with status: ${order.status}`);
     }
 
@@ -135,7 +172,7 @@ export async function cancelOrder(orderId) {
 
     // Update order status
     order.status = ORDER_STATUSES.CANCELLED;
-    order.closedAt = new Date();
+    order.cancelledAt = new Date();
     await order.save();
 
     return order;
@@ -195,8 +232,8 @@ export async function getOrders(tradingAccountId, filters = {}) {
 /**
  * Get open orders for a trading account
  */
-export async function getOpenOrders(tradingAccountId) {
-    return getOrders(tradingAccountId, { status: ORDER_STATUSES.OPEN });
+export async function getPendingOrders(tradingAccountId) {
+    return getOrders(tradingAccountId, { status: ORDER_STATUSES.PENDING });
 }
 
 /**
@@ -221,20 +258,20 @@ export async function getOrderStatistics(tradingAccountId) {
         stats[order.status]++;
 
         if (order.status === ORDER_STATUSES.CLOSED && order.pnl) {
-            const pl = parseFloat(order.pnl);
-            stats.totalProfitLoss += pl;
+            const pnl = parseFloat(order.pnl);
+            stats.totalProfitLoss += pnl;
 
-            if (pl > 0) {
+            if (pnl > 0) {
                 stats.wins++;
-            } else if (pl < 0) {
+            } else if (pnl < 0) {
                 stats.losses++;
             }
         }
     });
 
-    const totalTrades = stats.wins + stats.losses;
-    if (totalTrades > 0) {
-        stats.winRate = (stats.wins / totalTrades) * 100;
+    const totalViableTrades = stats.wins + stats.losses;
+    if (totalViableTrades > 0) {
+        stats.winRate = (stats.wins / totalViableTrades) * 100;
     }
 
     return stats;
@@ -244,12 +281,12 @@ export async function getOrderStatistics(tradingAccountId) {
  * Bulk cancel all open orders for a trading account
  */
 export async function cancelAllOrders(tradingAccountId) {
-    const openOrders = await getOpenOrders(tradingAccountId);
+    const pendingOrders = await getPendingOrders(tradingAccountId);
 
     const cancelled = [];
     const errors = [];
 
-    for (const order of openOrders) {
+    for (const order of pendingOrders) {
         try {
             const result = await cancelOrder(order._id);
             cancelled.push(result);

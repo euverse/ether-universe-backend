@@ -1,12 +1,9 @@
 import { model } from 'mongoose';
 
-const AdminWallet = model('AdminWallet');
 const AdminBalance = model('AdminBalance');
 const Pair = model('Pair');
 
-// ============================================
 // ADMIN BALANCE QUERY FUNCTIONS
-// ============================================
 
 /**
  * Get all admin balances grouped by pair
@@ -32,6 +29,10 @@ export async function getAdminBalancesByPair({ includeZeroBalances = true } = {}
     const grouped = {};
 
     for (const balance of balances) {
+        if (!balance.pair) {
+            throw new Error(`AdminBalance ${balance._id} is missing pair reference`);
+        }
+
         const pairSymbol = balance.pair.symbol;
 
         if (!grouped[pairSymbol]) {
@@ -69,15 +70,11 @@ export async function getAdminBalancesByPair({ includeZeroBalances = true } = {}
     const formatted = {};
 
     for (const [pairSymbol, data] of Object.entries(grouped)) {
-        const decimals = data.pair.decimals || 18;
+        validateDecimals(data.pair.decimals);
+        const decimals = data.pair.decimals;
 
         formatted[pairSymbol] = {
-            pair: {
-                _id: data.pair._id,
-                symbol: data.pair.symbol,
-                baseAsset: data.pair.baseAsset,
-                decimals: data.pair.decimals
-            },
+            pair: data.pair,
             networks: {},
             totals: {
                 available: toReadableUnit(data.totals.available, decimals),
@@ -111,8 +108,10 @@ export async function getAdminBalancesByPair({ includeZeroBalances = true } = {}
 export async function getAdminTotalBalanceForPair(baseAsset) {
     const pair = await Pair.findOne({ baseAsset });
     if (!pair) {
-        throw new Error(`${baseAsset} not found`);
+        throw Error(`Pair ${baseAsset} not found`);
     }
+
+    validateDecimals(pair.decimals);
 
     const balances = await AdminBalance.find({ pair: pair._id });
 
@@ -141,7 +140,7 @@ export async function getAdminTotalBalanceForPair(baseAsset) {
         };
     });
 
-    const decimals = pair.decimals || 18;
+    const decimals = pair.decimals;
     const totalAmount = add(totalAvailable, totalLocked);
 
     // Format to human-readable
@@ -173,9 +172,7 @@ export async function getAdminTotalBalanceForPair(baseAsset) {
     };
 }
 
-// ============================================
 // ADMIN BALANCE MODIFICATION FUNCTIONS
-// ============================================
 
 /**
  * Add balance to admin (when sweeping from users)
@@ -188,10 +185,14 @@ export async function getAdminTotalBalanceForPair(baseAsset) {
  * @returns {Object} Transaction details
  */
 export async function addAdminBalance(baseAsset, amount, targetNetwork) {
+    validatePositiveAmount(amount, 'amount');
+
     const pair = await Pair.findOne({ baseAsset });
     if (!pair) {
-        throw new Error(`${baseAsset} not found`);
+        throw Error(`Pair ${baseAsset} not found`);
     }
+
+    validateDecimals(pair.decimals);
 
     const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
@@ -236,16 +237,24 @@ export async function deductAdminBalance(
     withdrawalType = 'user',
     sourceNetwork = null
 ) {
+    validatePositiveAmount(amount, 'amount');
+
     const pair = await Pair.findOne({ baseAsset });
     if (!pair) {
-        throw new Error(`${baseAsset} not found`);
+        throw Error(`Pair ${baseAsset} not found`);
     }
+
+    validateDecimals(pair.decimals);
 
     const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
     let balances = await AdminBalance.find({
         pair: pair._id
     }).sort({ available: -1 });
+
+    if (balances.length === 0) {
+        throw new Error(`No admin balance records found for pair: ${baseAsset}`);
+    }
 
     // If source network specified, deduct from that network only
     if (sourceNetwork) {
@@ -273,10 +282,8 @@ export async function deductAdminBalance(
         await balance.save();
 
         return {
-            baseAsset,
             network: sourceNetwork,
             amount: toReadableUnit(amountSmallest, pair.decimals),
-            newAvailable: toReadableUnit(balance.available, pair.decimals),
             balanceId: balance._id
         };
     }
@@ -307,8 +314,7 @@ export async function deductAdminBalance(
         deducted.push({
             balanceId: balance._id,
             network: balance.network,
-            amount: toReadableUnit(toDeduct, pair.decimals),
-            newAvailable: toReadableUnit(balance.available, pair.decimals)
+            amount: toReadableUnit(toDeduct, pair.decimals)
         });
 
         remaining = subtract(remaining, toDeduct);
@@ -320,11 +326,7 @@ export async function deductAdminBalance(
         );
     }
 
-    return {
-        baseAsset,
-        totalAmount: amount,
-        distributions: deducted
-    };
+    return { distributions: deducted };
 }
 
 /**
@@ -338,16 +340,23 @@ export async function deductAdminBalance(
  * @returns {Object} Lock details with distributions
  */
 export async function lockAdminBalance(baseAsset, amount, preferredNetwork = null) {
+    validatePositiveAmount(amount, 'amount');
+
     const pair = await Pair.findOne({ baseAsset });
     if (!pair) {
-        throw new Error(`${baseAsset} not found`);
+        throw Error(`Pair ${baseAsset} not found`);
     }
 
+    validateDecimals(pair.decimals);
     const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
     let balances = await AdminBalance.find({
         pair: pair._id
     }).sort({ available: -1 });
+
+    if (balances.length === 0) {
+        throw new Error(`No admin balance records found for pair: ${baseAsset}`);
+    }
 
     // Prefer specific network if specified
     if (preferredNetwork) {
@@ -358,49 +367,48 @@ export async function lockAdminBalance(baseAsset, amount, preferredNetwork = nul
         });
     }
 
+    // PHASE 1: Calculate distribution WITHOUT modifying anything
     let remaining = amountSmallest;
-    const locked = [];
+    const plannedLocks = [];
 
-    // Lock from balances until we have enough
     for (const balance of balances) {
         if (compare(remaining, '0') <= 0) break;
-
         if (compare(balance.available, '0') <= 0) continue;
 
         const toLock = min(balance.available, remaining);
 
-        balance.available = subtract(balance.available, toLock);
-        balance.locked = add(balance.locked, toLock);
-
-        await balance.save();
-
-        locked.push({
+        plannedLocks.push({
             balanceId: balance._id,
             network: balance.network,
-            amount: toLock // Keep in smallest units
+            amount: toLock
         });
 
         remaining = subtract(remaining, toLock);
     }
 
+    // PHASE 2: Verify we have enough BEFORE making any changes
     if (compare(remaining, '0') > 0) {
-        // Rollback
-        for (const item of locked) {
-            const balance = await AdminBalance.findById(item.balanceId);
-            balance.available = add(balance.available, item.amount);
-            balance.locked = subtract(balance.locked, item.amount);
-            await balance.save();
-        }
-
         throw new Error(
             `Insufficient admin balance. Required: ${amount}, Missing: ${toReadableUnit(remaining, pair.decimals)}`
         );
     }
 
+    // PHASE 3: Now apply all locks (we know we have enough)
+    for (const planned of plannedLocks) {
+        const balance = await AdminBalance.findById(planned.balanceId);
+        if (!balance) {
+            throw new Error(`AdminBalance ${planned.balanceId} not found`);
+        }
+
+        balance.available = subtract(balance.available, planned.amount);
+        balance.locked = add(balance.locked, planned.amount);
+        balance.lastLockedAt = new Date();
+        await balance.save();
+    }
+
     return {
-        baseAsset,
         totalLocked: toReadableUnit(amountSmallest, pair.decimals),
-        distributions: locked // Keep in smallest units
+        distributions: plannedLocks // Keep in smallest units
     };
 }
 
@@ -413,22 +421,55 @@ export async function lockAdminBalance(baseAsset, amount, preferredNetwork = nul
  * @returns {Object} Success status
  */
 export async function unlockAdminBalance(baseAsset, distributions) {
+    if (!distributions || distributions.length === 0) {
+        throw new Error('No distributions provided for unlock');
+    }
+
     const pair = await Pair.findOne({ baseAsset });
     if (!pair) {
-        throw new Error(`${baseAsset} not found`);
+        throw Error(`Pair ${baseAsset} not found`);
     }
+
+    validateDecimals(pair.decimals);
+
+    const errors = [];
+    let totalUnlocked = '0';
 
     for (const dist of distributions) {
-        const balance = await AdminBalance.findById(dist.balanceId);
-        if (!balance) continue;
+        try {
+            const balance = await AdminBalance.findById(dist.balanceId);
+            if (!balance) {
+                errors.push(`AdminBalance ${dist.balanceId} not found - funds may be permanently locked`);
+                continue;
+            }
 
-        balance.locked = subtract(balance.locked, dist.amount);
-        balance.available = add(balance.available, dist.amount);
+            // Verify sufficient locked balance
+            if (!isGreaterOrEqual(balance.locked, dist.amount)) {
+                errors.push(
+                    `Insufficient locked balance ${dist.balanceId}. ` +
+                    `Locked: ${balance.locked}, Attempting to unlock: ${dist.amount}`
+                );
+                continue;
+            }
 
-        await balance.save();
+            balance.locked = subtract(balance.locked, dist.amount);
+            balance.available = add(balance.available, dist.amount);
+            balance.lastUnlockedAt = new Date();
+            await balance.save();
+
+            totalUnlocked = add(totalUnlocked, dist.amount);
+        } catch (error) {
+            errors.push(`Failed to unlock AdminBalance ${dist.balanceId}: ${error.message}`);
+        }
     }
 
-    return { success: true };
+    if (errors.length > 0) {
+        throw new Error(`Unlock completed with errors: ${errors.join('; ')}`);
+    }
+
+    return {
+        totalUnlocked: toReadableUnit(totalUnlocked, pair.decimals)
+    };
 }
 
 /**
@@ -441,27 +482,60 @@ export async function unlockAdminBalance(baseAsset, distributions) {
  * @returns {Object} Success status
  */
 export async function finalizeLockedAdminBalance(baseAsset, distributions, withdrawalType = 'user') {
+    if (!distributions || distributions.length === 0) {
+        throw new Error('No distributions provided for finalization');
+    }
+
     const pair = await Pair.findOne({ baseAsset });
     if (!pair) {
-        throw new Error(`${baseAsset} not found`);
+        throw Error(`Pair ${baseAsset} not found`);
     }
+
+    validateDecimals(pair.decimals);
+
+    const errors = [];
+    let totalFinalized = '0';
 
     for (const dist of distributions) {
-        const balance = await AdminBalance.findById(dist.balanceId);
-        if (!balance) continue;
+        try {
+            const balance = await AdminBalance.findById(dist.balanceId);
+            if (!balance) {
+                errors.push(`AdminBalance ${dist.balanceId} not found - funds may be permanently locked`);
+                continue;
+            }
 
-        balance.locked = subtract(balance.locked, dist.amount);
+            // Verify sufficient locked balance
+            if (!isGreaterOrEqual(balance.locked, dist.amount)) {
+                errors.push(
+                    `Insufficient locked balance ${dist.balanceId}. ` +
+                    `Locked: ${balance.locked}, Attempting to finalize: ${dist.amount}`
+                );
+                continue;
+            }
 
-        if (withdrawalType === 'user') {
-            balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, dist.amount);
-        } else {
-            balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, dist.amount);
+            balance.locked = subtract(balance.locked, dist.amount);
+
+            if (withdrawalType === 'user') {
+                balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, dist.amount);
+            } else {
+                balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, dist.amount);
+            }
+
+            balance.lastWithdrawalAt = new Date();
+
+            await balance.save();
+
+            totalFinalized = add(totalFinalized, dist.amount);
+        } catch (error) {
+            errors.push(`Failed to finalize AdminBalance ${dist.balanceId}: ${error.message}`);
         }
-
-        balance.lastWithdrawalAt = new Date();
-
-        await balance.save();
     }
 
-    return { success: true };
+    if (errors.length > 0) {
+        throw new Error(`Finalization completed with errors: ${errors.join('; ')}`);
+    }
+
+    return {
+        totalFinalized: toReadableUnit(totalFinalized, pair.decimals)
+    };
 }

@@ -12,17 +12,18 @@ const rpcUrls = useRuntimeConfig().rpcUrls;
 
 // RPC endpoints
 const RPC_ENDPOINTS = {
-    [NETWORKS.ETHEREUM]: rpcUrls.ETH_RPC_URL,
-    [NETWORKS.POLYGON]: rpcUrls.POLYGON_RPC_URL,
+    [NETWORKS.ETHEREUM]: rpcUrls.ethereum,
+    [NETWORKS.POLYGON]: rpcUrls.polygon,
 };
 
 // Minimum balance thresholds (in human-readable format)
 const MIN_BALANCE_THRESHOLDS = {
     ETH: '0.001',
     USDT: '1',
-    USDC: '1',
-    DAI: '1'
 };
+
+// Minimum ETH required for ERC-20 sweeps (in ETH)
+const MIN_ETH_FOR_ERC20_SWEEP = '0.001';
 
 /**
  * Get provider for network
@@ -32,15 +33,22 @@ function getProvider(network) {
     if (!rpcUrl) {
         throw new Error(`No RPC endpoint configured for network: ${network}`);
     }
-    return new ethers.JsonRpcProvider(rpcUrl);
+    return createProvider(rpcUrl);
+}
+
+/**
+ * Validate that network is supported
+ */
+function isNetworkSupported(network) {
+    return Object.keys(RPC_ENDPOINTS).includes(network);
 }
 
 /**
  * Get native token balance for an address
  */
-async function getNativeBalance(network, address) {
+async function getNativeBalance(network, walletAddress) {
     const provider = getProvider(network);
-    const balance = await provider.getBalance(address);
+    const balance = await provider.getBalance(walletAddress);
     return ethers.formatEther(balance);
 }
 
@@ -62,8 +70,8 @@ async function getTokenBalance(network, tokenAddress, walletAddress, decimals) {
 /**
  * Check if balance meets minimum threshold
  */
-function meetsMinimumThreshold(amount, pairSymbol) {
-    const threshold = MIN_BALANCE_THRESHOLDS[pairSymbol] || '0';
+function meetsMinimumThreshold(amount, pairBaseAsset) {
+    const threshold = MIN_BALANCE_THRESHOLDS[pairBaseAsset] || '0';
     return parseFloat(amount) >= parseFloat(threshold);
 }
 
@@ -78,10 +86,7 @@ async function getPendingDepositAmount(walletId, pairId, network) {
         status: DEPOSIT_STATUS.PENDING
     });
 
-    let total = '0';
-    for (const deposit of pendingDeposits) {
-        total = add(total, deposit.amountSmallest);
-    }
+    let total = pendingDeposits.reduce((total, deposit) => add(total, deposit.amountSmallest), '0');
 
     return total;
 }
@@ -93,6 +98,12 @@ async function getPendingDepositAmount(walletId, pairId, network) {
 export async function scanWalletForDeposits(wallet, network, pairs) {
     const deposits = [];
 
+    // Validate network is supported
+    if (!isNetworkSupported(network)) {
+        console.warn(`[scanWalletForDeposits] Unsupported network: ${network}`);
+        return deposits;
+    }
+
     try {
         // Scan for each pair
         for (const pair of pairs) {
@@ -100,7 +111,7 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
                 let onchainBalance = '0';
 
                 // Get on-chain balance
-                if (!pair.contractAddresses || !pair.contractAddresses.get(network)) {
+                if (!pair.contractAddresses?.get?.(network)) {
                     // Native token (ETH)
                     if (pair.symbol === 'ETH') {
                         onchainBalance = await getNativeBalance(network, wallet.address);
@@ -117,7 +128,7 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
                 }
 
                 // Check if balance meets minimum threshold
-                if (!meetsMinimumThreshold(onchainBalance, pair.symbol)) {
+                if (!meetsMinimumThreshold(onchainBalance, pair.baseAsset)) {
                     continue;
                 }
 
@@ -168,6 +179,21 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
                 // Convert to human-readable
                 const newDepositAmount = toReadableUnit(newDepositAmountSmallest, pair.decimals);
 
+                // Simple duplicate prevention - check if deposit with same amount was recently created
+                const recentDuplicate = await Deposit.findOne({
+                    wallet: wallet._id,
+                    pair: pair._id,
+                    network,
+                    amountSmallest: newDepositAmountSmallest,
+                    status: DEPOSIT_STATUS.PENDING,
+                    createdAt: { $gte: new Date(Date.now() - 60000) } // Within last minute
+                });
+
+                if (recentDuplicate) {
+                    console.log(`[scanWalletForDeposits] Skipping duplicate deposit for ${pair.symbol}`);
+                    continue;
+                }
+
                 // Create deposit record as PENDING (ready to be swept)
                 const deposit = await Deposit.create({
                     tradingAccount: wallet.tradingAccount,
@@ -178,7 +204,6 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
                     amount: newDepositAmount,
                     amountSmallest: newDepositAmountSmallest,
                     status: DEPOSIT_STATUS.PENDING,
-                    detectedAt: new Date()
                 });
 
                 deposits.push(deposit);
@@ -188,6 +213,11 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
             } catch (pairError) {
                 console.error(`[scanWalletForDeposits] Error scanning pair ${pair.symbol}:`, pairError.message);
             }
+        }
+
+        // Log successful scans with no deposits for monitoring
+        if (deposits.length === 0) {
+            console.log(`[scanWalletForDeposits] Scan completed for wallet ${wallet._id} on ${network} - no new deposits found`);
         }
 
     } catch (error) {
@@ -232,6 +262,8 @@ export async function scanAllEVMWalletsForDeposits() {
             }
         }
 
+        console.log(`[scanAllEVMWalletsForDeposits] Completed: ${results.scanned} scans, ${results.found} deposits found`);
+
         return results;
 
     } catch (error) {
@@ -259,8 +291,34 @@ export async function sweepPendingDeposits() {
         };
 
         for (const deposit of depositsToSweep) {
+            // Validate populated fields
+            if (!deposit.wallet || !deposit.pair || !deposit.balance) {
+                console.error(`[sweepPendingDeposits] Invalid deposit ${deposit._id}: missing populated fields`);
+                results.failed++;
+                continue;
+            }
+
+            // Validate amountSmallest exists
+            if (!deposit.amountSmallest || compare(deposit.amountSmallest, '0') <= 0) {
+                console.error(`[sweepPendingDeposits] Invalid deposit ${deposit._id}: invalid amountSmallest`);
+                results.failed++;
+                continue;
+            }
+
             try {
-                await sweepSingleDeposit(deposit);
+                // Simple concurrent sweep prevention - mark as processing
+                const updated = await Deposit.findOneAndUpdate(
+                    { _id: deposit._id, status: DEPOSIT_STATUS.PENDING },
+                    { $set: { status: DEPOSIT_STATUS.PROCESSING } },
+                    { new: true }
+                );
+
+                if (!updated) {
+                    console.log(`[sweepPendingDeposits] Deposit ${deposit._id} already being processed`);
+                    continue;
+                }
+
+                await sweepSingleDeposit(updated);
                 results.swept++;
                 results.details.push({
                     depositId: deposit._id,
@@ -270,6 +328,13 @@ export async function sweepPendingDeposits() {
                     status: 'success'
                 });
             } catch (error) {
+                // Mark as FAILED for retry later
+                await Deposit.findByIdAndUpdate(deposit._id, {
+                    status: DEPOSIT_STATUS.FAILED,
+                    failureReason: error.message,
+                    failedAt: new Date()
+                });
+
                 results.failed++;
                 results.details.push({
                     depositId: deposit._id,
@@ -283,6 +348,8 @@ export async function sweepPendingDeposits() {
             }
         }
 
+        console.log(`[sweepPendingDeposits] Completed: ${results.swept} swept, ${results.failed} failed`);
+
         return results;
 
     } catch (error) {
@@ -292,88 +359,150 @@ export async function sweepPendingDeposits() {
 }
 
 /**
+ * Retry failed deposits
+ */
+export async function retryFailedDeposits() {
+    try {
+        // Get failed deposits that haven't been retried too many times
+        const failedDeposits = await Deposit.find({
+            status: DEPOSIT_STATUS.FAILED,
+            retryCount: { $lt: 3 }, // Max 3 retries
+            failedAt: { $lt: new Date(Date.now() - 300000) } // Failed at least 5 minutes ago
+        }).populate('wallet pair balance');
+
+        const results = {
+            retried: 0,
+            succeeded: 0,
+            failed: 0
+        };
+
+        for (const deposit of failedDeposits) {
+            try {
+                // Reset to PENDING for retry
+                deposit.status = DEPOSIT_STATUS.PENDING;
+                deposit.retryCount = (deposit.retryCount || 0) + 1;
+                await deposit.save();
+
+                results.retried++;
+                console.log(`[retryFailedDeposits] Retrying deposit ${deposit._id} (attempt ${deposit.retryCount})`);
+            } catch (error) {
+                console.error(`[retryFailedDeposits] Failed to retry deposit ${deposit._id}:`, error);
+            }
+        }
+
+        return results;
+
+    } catch (error) {
+        console.error('[retryFailedDeposits] Error:', error);
+        return { retried: 0, succeeded: 0, failed: 0 };
+    }
+}
+
+/**
  * Sweep a single deposit from user wallet to admin wallet
+ * Now uses the agnostic evmTransfer function
  */
 async function sweepSingleDeposit(deposit) {
     const wallet = deposit.wallet;
     const pair = deposit.pair;
     const network = deposit.network;
 
-    // Get admin wallet for this chain type
+    // Validate master mnemonic
+    if (!process.env.MASTER_MNEMONIC) {
+        throw new Error('MASTER_MNEMONIC environment variable not set');
+    }
+
+    // Get admin wallet by both chainType AND network
     const adminWallet = await AdminWallet.findOne({
         chainType: wallet.chainType,
+        network: network,
         isActive: true
     }).select('+derivationPath');
 
     if (!adminWallet) {
-        throw new Error('No active admin wallet found');
+        throw new Error(`No active admin wallet found for ${wallet.chainType} on ${network}`);
     }
 
-    // Get provider and signer
+    // Get provider and create signer
     const provider = getProvider(network);
-    const mnemonic = ethers.Mnemonic.fromPhrase(process.env.MASTER_MNEMONIC);
-    const hdNode = ethers.HDNodeWallet.fromMnemonic(mnemonic, "m");
-    const signer = hdNode.derivePath(wallet.derivationPath).connect(provider);
+    const signer = createSignerFromMnemonic(
+        process.env.MASTER_MNEMONIC,
+        wallet.derivationPath,
+        provider
+    );
 
-    let txHash;
+    let transferResult;
 
-    // Execute sweep transaction
-    if (!pair.contractAddresses || !pair.contractAddresses.get(network)) {
-        // Native token (ETH)
-        const balance = await provider.getBalance(wallet.address);
-        const gasPrice = (await provider.getFeeData()).gasPrice;
-        const gasLimit = 21000n;
-        const gasCost = gasPrice * gasLimit;
+    // Determine if this is a native token or ERC-20
+    const isNativeToken = !pair.contractAddresses?.get?.(network);
 
-        const amountToSend = balance - gasCost;
-
-        if (amountToSend <= 0n) {
-            throw new Error('Insufficient balance to cover gas fees');
-        }
-
-        const tx = await signer.sendTransaction({
-            to: adminWallet.address,
-            value: amountToSend,
-            gasLimit
+    if (isNativeToken) {
+        // Native token transfer (ETH, MATIC, etc.)
+        transferResult = await evmTransfer({
+            provider,
+            signer,
+            toAddress: adminWallet.address,
+            amount: deposit.amountSmallest,
+            deductGasFromAmount: true // Sweep full balance minus gas
         });
-
-        const receipt = await tx.wait();
-        txHash = receipt.hash;
-
     } else {
-        // ERC-20 token
+        // ERC-20 token transfer
         const tokenAddress = pair.contractAddresses.get(network);
-        const contract = new ethers.Contract(
-            tokenAddress,
-            ['function transfer(address to, uint256 amount) returns (bool)'],
-            signer
+
+        transferResult = await evmTransfer({
+            provider,
+            signer,
+            toAddress: adminWallet.address,
+            amount: deposit.amountSmallest,
+            tokenConfig: {
+                address: tokenAddress,
+                decimals: pair.decimals
+            }
+        });
+    }
+
+    // Handle accounting updates
+    try {
+        // Convert actualSweptAmount back to readable for accounting
+        const actualSweptAmountReadable = toReadableUnit(transferResult.actualAmount, pair.decimals);
+
+        await addDeposit(
+            deposit.tradingAccount,
+            pair.baseAsset,
+            actualSweptAmountReadable,
+            network
         );
 
-        const amountSmallest = toSmallestUnit(deposit.amount, pair.decimals);
-        const tx = await contract.transfer(adminWallet.address, amountSmallest);
-        const receipt = await tx.wait();
-        txHash = receipt.hash;
+        // Update admin balance using utility
+        await addAdminBalance(
+            pair.baseAsset,
+            actualSweptAmountReadable,
+            network
+        );
+
+        // Mark deposit as swept
+        deposit.status = DEPOSIT_STATUS.SWEPT;
+        deposit.sweptAt = new Date();
+        deposit.sweepTxHash = transferResult.txHash;
+        deposit.sweptToAdminWallet = adminWallet._id;
+        deposit.actualSweptAmount = actualSweptAmountReadable;
+        deposit.actualSweptAmountSmallest = transferResult.actualAmount;
+        await deposit.save();
+
+        console.log(`[sweepSingleDeposit] Swept ${actualSweptAmountReadable} ${pair.symbol} to admin wallet. TX: ${transferResult.txHash}`);
+
+    } catch (updateError) {
+        // Transaction succeeded but accounting failed - critical error
+        console.error(`[sweepSingleDeposit] CRITICAL: Sweep succeeded but accounting failed for deposit ${deposit._id}. TX: ${transferResult.txHash}`, updateError);
+
+        // Still mark as swept with the tx hash so we don't try again
+        deposit.status = DEPOSIT_STATUS.SWEPT;
+        deposit.sweptAt = new Date();
+        deposit.sweepTxHash = transferResult.txHash;
+        deposit.sweptToAdminWallet = adminWallet._id;
+        deposit.accountingError = updateError.message;
+        await deposit.save();
+
+        throw new Error(`Accounting failed after successful sweep: ${updateError.message}`);
     }
-    await addDeposit(
-        deposit.tradingAccount,
-        pair.baseAsset,
-        deposit.amount,
-        network
-    );
-
-    // Update admin balance using utility
-    await addAdminBalance(
-        pair.baseAsset,
-        deposit.amount,
-        network
-    );
-
-    // Mark deposit as swept
-    deposit.status = DEPOSIT_STATUS.SWEPT;
-    deposit.sweptAt = new Date();
-    deposit.sweepTxHash = txHash;
-    deposit.sweptToAdminWallet = adminWallet._id;
-    await deposit.save();
-
-    console.log(`[sweepSingleDeposit] Swept ${deposit.amount} ${pair.symbol} to admin wallet. TX: ${txHash}`);
 }

@@ -27,6 +27,17 @@ export default defineEventHandler(async event => {
 
     const Chat = getModel("Chat");
 
+    const Admin = getModel("Admin");
+    const admin = await Admin.findOne().select("_id fullName avatarUrl")
+
+    if (!admin) {
+        throw createError({
+            statusCode: 404,
+            statusMessage: "Other User not found"
+        })
+    }
+
+
     // Use aggregation to filter messages at database level
     const result = await Chat.aggregate([
         // Match the user's chat
@@ -70,24 +81,19 @@ export default defineEventHandler(async event => {
 
     const chat = result[0];
 
-    // Populate author references
-    await Chat.populate(chat.messages, {
-        path: 'author',
-        select: 'personalInfo fullName avatarUrl'
-    });
-
     // Map messages to desired format
     const formattedMessages = chat.messages.map(message => ({
         _id: message._id,
         type: message.type,
         textContent: message.textContent,
         attachments: message.attachments || [],
-        author: message.author ? {
+        author: {
             _id: message.author._id,
-            fullName: message.author.fullName ||
-                `${message.author.personalInfo?.firstName || ''} ${message.author.personalInfo?.lastName || ''}`.trim() || 'N/A',
-            avatarUrl: message.author.avatarUrl
-        } : null,
+            ...(message.type == MESSAGE_TYPES.ADMIN && {
+                fullName: admin.fullName.split(' ')[0],
+                avatarUrl: admin.avatarUrl
+            })
+        },
         createdAt: message.createdAt,
         deliveredAt: message.deliveredAt,
         seenAt: message.seenAt

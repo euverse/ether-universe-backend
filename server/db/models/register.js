@@ -5,12 +5,10 @@ import kycSubmissionSchema from "../schemas/KYCSubmission.js";
 import balanceSchema from "../schemas/Balance.js";
 import housePoolSchema from "../schemas/HousePool.js";
 import tradingAccountSchema from "../schemas/TradingAccount.js";
-import transactionSchema from "../schemas/Transaction.js";
 import walletSchema from "../schemas/Wallet.js";
 import adminSchema from '../schemas/Admin.js';
 import assetAllocationSchema from "../schemas/AssetAllocation.js";
 import depositSchema from '../schemas/Deposit.js';
-import withdrawalSchema from '../schemas/Withdrawal.js';
 import adminWalletSchema from '../schemas/AdminWallet.js';
 import pairSchema from "../schemas/Pair.js";
 import chatSchema from "../schemas/Chat.js";
@@ -20,13 +18,14 @@ import notificationSchema from "../schemas/Notification.js";
 import adminBalanceSchema from "../schemas/AdminBalance.js";
 import blackListedIp from "../schemas/BlackListedIp.js";
 import priceDataSchema from "../schemas/PriceData.js";
+import userWithdrawalSchema from "../schemas/UserWithdrawal.js";
+import adminWithdrawalSchema from "../schemas/AdminWithdrawal.js";
 
 const MODELS_REGISTER = {
     AssetAllocation: model('AssetAllocation', assetAllocationSchema, 'assets allocations'),
     Chat: model("Chat", chatSchema),
     HousePool: model('HousePool', housePoolSchema, 'house pools'),
     TradingAccount: model('TradingAccount', tradingAccountSchema, 'trading accounts'),
-    Transaction: model('Transaction', transactionSchema),
     User: model('User', userSchema),
     Balance: model('Balance', balanceSchema, 'user balances'),
     Wallet: model('Wallet', walletSchema, 'user wallets'),
@@ -34,7 +33,8 @@ const MODELS_REGISTER = {
     KYCSubmission: model('KYCSubmission', kycSubmissionSchema, 'kyc submissions'),
     Admin: model('Admin', adminSchema),
     Deposit: model('Deposit', depositSchema),
-    Withdrawal: model('Withdrawal', withdrawalSchema),
+    AdminWithdrawal: model('AdminWithdrawal', adminWithdrawalSchema, 'admin withdrawals'),
+    UserWithdrawal: model('UserWithdrawal', userWithdrawalSchema, 'user withdrawals'),
     AdminWallet: model('AdminWallet', adminWalletSchema, 'admin wallets'),
     AdminBalance: model('AdminBalance', adminBalanceSchema, 'admin balances'),
     Pair: model('Pair', pairSchema),

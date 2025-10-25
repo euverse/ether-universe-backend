@@ -1,13 +1,5 @@
-import * as bitcoin from 'bitcoinjs-lib';
-import { ECPairFactory } from 'ecpair';
-import * as ecc from '@bitcoinerlab/secp256k1';
-import { BIP32Factory } from 'bip32';
-import * as bip39 from 'bip39';
 import { CHAIN_TYPES, NETWORKS } from '~/db/schemas/Network.js';
 import { DEPOSIT_STATUS } from '~/db/schemas/Deposit.js';
-
-const ECPair = ECPairFactory(ecc);
-const bip32 = BIP32Factory(ecc);
 
 const Pair = getModel('Pair');
 const Wallet = getModel('Wallet');
@@ -18,90 +10,13 @@ const AdminWallet = getModel('AdminWallet');
 const rpcUrls = useRuntimeConfig().rpcUrls;
 
 // Bitcoin API endpoint
-const BTC_API_URL = rpcUrls.BITCOIN_RPC_URL || 'https://blockstream.info/api';
+const BTC_API_URL = rpcUrls.btc;
 
 // Minimum balance threshold
 const MIN_BTC_THRESHOLD = '0.0001'; // 10,000 satoshis
 
-// Bitcoin network configuration
-const BITCOIN_NETWORK = bitcoin.networks.bitcoin;
-
-/**
- * Get Bitcoin address balance
- */
-async function getBitcoinBalance(address) {
-    try {
-        const response = await $fetch(`${BTC_API_URL}/address/${address}`, {
-            timeout: 10000
-        });
-
-        // Get confirmed balance in satoshis
-        const balanceSat = response.chain_stats?.funded_txo_sum - response.chain_stats?.spent_txo_sum || 0;
-
-        // Convert to BTC
-        return (balanceSat / 1e8).toString();
-
-    } catch (error) {
-        console.error(`[getBitcoinBalance] Error fetching balance for ${address}:`, error.message);
-        throw error;
-    }
-}
-
-/**
- * Get UTXOs for an address
- */
-async function getUTXOs(address) {
-    try {
-        const utxos = await $fetch(`${BTC_API_URL}/address/${address}/utxo`, {
-            timeout: 10000
-        });
-
-        return utxos;
-
-    } catch (error) {
-        console.error(`[getUTXOs] Error fetching UTXOs for ${address}:`, error.message);
-        throw error;
-    }
-}
-
-/**
- * Estimate transaction fee
- */
-async function estimateFee() {
-    try {
-        const feeEstimates = await $fetch(`${BTC_API_URL}/fee-estimates`, {
-            timeout: 10000
-        });
-
-        // Use the fee for next block (fastest confirmation)
-        // Returns sat/vB
-        return Math.ceil(feeEstimates['1'] || 1);
-
-    } catch (error) {
-        console.error(`[estimateFee] Error:`, error.message);
-        // Default to 1 sat/vB if estimation fails
-        return 1;
-    }
-}
-
-/**
- * Broadcast Bitcoin transaction
- */
-async function broadcastTransaction(txHex) {
-    try {
-        const txid = await $fetch(`${BTC_API_URL}/tx`, {
-            method: 'POST',
-            body: txHex,
-            timeout: 10000
-        });
-
-        return txid;
-
-    } catch (error) {
-        console.error(`[broadcastTransaction] Error:`, error.message);
-        throw error;
-    }
-}
+// Minimum confirmations required for UTXOs (0 = unconfirmed accepted)
+const MIN_CONFIRMATIONS = 0;
 
 /**
  * Calculate total pending deposit amount
@@ -111,13 +26,10 @@ async function getPendingDepositAmount(walletId, pairId, network) {
         wallet: walletId,
         pair: pairId,
         network,
-        status: DEPOSIT_STATUS.PENDING
+        status: { $in: [DEPOSIT_STATUS.PENDING, DEPOSIT_STATUS.PROCESSING] }
     });
 
-    let total = '0';
-    for (const deposit of pendingDeposits) {
-        total = add(total, deposit.amountSmallest);
-    }
+    const total = pendingDeposits.reduce((total, deposit) => add(total, deposit.amountSmallest), '0');
 
     return total;
 }
@@ -131,7 +43,7 @@ export async function scanBitcoinWalletForDeposits(wallet) {
     try {
         // Get BTC pair
         const btcPair = await Pair.findOne({
-            symbol: 'BTC',
+            baseAsset: 'BTC',
             chainType: CHAIN_TYPES.BITCOIN,
             isActive: true
         });
@@ -142,7 +54,7 @@ export async function scanBitcoinWalletForDeposits(wallet) {
         }
 
         // Get on-chain balance
-        const onchainBalance = await getBitcoinBalance(wallet.address);
+        const onchainBalance = await getBitcoinBalanceBTC(BTC_API_URL, wallet.address);
 
         // Check minimum threshold
         if (parseFloat(onchainBalance) < parseFloat(MIN_BTC_THRESHOLD)) {
@@ -171,7 +83,7 @@ export async function scanBitcoinWalletForDeposits(wallet) {
             }
         );
 
-        // Calculate pending amount
+        // Calculate pending amount (including PROCESSING status)
         const pendingAmountSmallest = await getPendingDepositAmount(
             wallet._id,
             btcPair._id,
@@ -195,6 +107,21 @@ export async function scanBitcoinWalletForDeposits(wallet) {
         // Convert to BTC
         const newDepositAmount = toReadableUnit(newDepositAmountSmallest, 8);
 
+        // Simple duplicate prevention - check for recent similar deposits
+        const recentDuplicate = await Deposit.findOne({
+            wallet: wallet._id,
+            pair: btcPair._id,
+            network: NETWORKS.BITCOIN,
+            amountSmallest: newDepositAmountSmallest,
+            status: { $in: [DEPOSIT_STATUS.PENDING, DEPOSIT_STATUS.PROCESSING] },
+            createdAt: { $gte: new Date(Date.now() - 60000) } // Within last minute
+        });
+
+        if (recentDuplicate) {
+            console.log(`[scanBitcoinWalletForDeposits] Skipping duplicate deposit for ${wallet.address}`);
+            return deposits;
+        }
+
         // Create deposit record
         const deposit = await Deposit.create({
             tradingAccount: wallet.tradingAccount,
@@ -205,7 +132,6 @@ export async function scanBitcoinWalletForDeposits(wallet) {
             amount: newDepositAmount,
             amountSmallest: newDepositAmountSmallest,
             status: DEPOSIT_STATUS.PENDING,
-            detectedAt: new Date()
         });
 
         deposits.push(deposit);
@@ -243,6 +169,8 @@ export async function scanAllBitcoinWalletsForDeposits() {
             results.scanned++;
         }
 
+        console.log(`[scanAllBitcoinWalletsForDeposits] Completed: ${results.scanned} scans, ${results.found} deposits found`);
+
         return results;
 
     } catch (error) {
@@ -269,8 +197,34 @@ export async function sweepPendingBitcoinDeposits() {
         };
 
         for (const deposit of depositsToSweep) {
+            // Validate populated fields
+            if (!deposit.wallet || !deposit.pair || !deposit.balance) {
+                console.error(`[sweepPendingBitcoinDeposits] Invalid deposit ${deposit._id}: missing populated fields`);
+                results.failed++;
+                continue;
+            }
+
+            // Validate amountSmallest exists
+            if (!deposit.amountSmallest || compare(deposit.amountSmallest, '0') <= 0) {
+                console.error(`[sweepPendingBitcoinDeposits] Invalid deposit ${deposit._id}: invalid amountSmallest`);
+                results.failed++;
+                continue;
+            }
+
             try {
-                await sweepSingleBitcoinDeposit(deposit);
+                // Prevent concurrent sweeps - mark as PROCESSING
+                const updated = await Deposit.findOneAndUpdate(
+                    { _id: deposit._id, status: DEPOSIT_STATUS.PENDING },
+                    { $set: { status: DEPOSIT_STATUS.PROCESSING } },
+                    { new: true }
+                );
+
+                if (!updated) {
+                    console.log(`[sweepPendingBitcoinDeposits] Deposit ${deposit._id} already being processed`);
+                    continue;
+                }
+
+                await sweepSingleBitcoinDeposit(updated);
                 results.swept++;
                 results.details.push({
                     depositId: deposit._id,
@@ -280,6 +234,13 @@ export async function sweepPendingBitcoinDeposits() {
                     status: 'success'
                 });
             } catch (error) {
+                // Mark as FAILED for retry later
+                await Deposit.findByIdAndUpdate(deposit._id, {
+                    status: DEPOSIT_STATUS.FAILED,
+                    failureReason: error.message,
+                    failedAt: new Date()
+                });
+
                 results.failed++;
                 results.details.push({
                     depositId: deposit._id,
@@ -293,6 +254,8 @@ export async function sweepPendingBitcoinDeposits() {
             }
         }
 
+        console.log(`[sweepPendingBitcoinDeposits] Completed: ${results.swept} swept, ${results.failed} failed`);
+
         return results;
 
     } catch (error) {
@@ -302,15 +265,63 @@ export async function sweepPendingBitcoinDeposits() {
 }
 
 /**
+ * Retry failed Bitcoin deposits
+ */
+export async function retryFailedBitcoinDeposits() {
+    try {
+        // Get failed deposits that haven't been retried too many times
+        const failedDeposits = await Deposit.find({
+            network: NETWORKS.BITCOIN,
+            status: DEPOSIT_STATUS.FAILED,
+            retryCount: { $lt: 3 }, // Max 3 retries
+            failedAt: { $lt: new Date(Date.now() - 300000) } // Failed at least 5 minutes ago
+        }).populate('wallet pair balance');
+
+        const results = {
+            retried: 0,
+            succeeded: 0,
+            failed: 0
+        };
+
+        for (const deposit of failedDeposits) {
+            try {
+                // Reset to PENDING for retry
+                deposit.status = DEPOSIT_STATUS.PENDING;
+                deposit.retryCount = (deposit.retryCount || 0) + 1;
+                await deposit.save();
+
+                results.retried++;
+                console.log(`[retryFailedBitcoinDeposits] Retrying deposit ${deposit._id} (attempt ${deposit.retryCount})`);
+            } catch (error) {
+                console.error(`[retryFailedBitcoinDeposits] Failed to retry deposit ${deposit._id}:`, error);
+            }
+        }
+
+        return results;
+
+    } catch (error) {
+        console.error('[retryFailedBitcoinDeposits] Error:', error);
+        return { retried: 0, succeeded: 0, failed: 0 };
+    }
+}
+
+/**
  * Sweep a single Bitcoin deposit from user wallet to admin wallet
+ * Now uses the agnostic btcTransfer function
  */
 async function sweepSingleBitcoinDeposit(deposit) {
     const wallet = deposit.wallet;
     const pair = deposit.pair;
 
+    // Validate master mnemonic
+    if (!process.env.MASTER_MNEMONIC) {
+        throw new Error('MASTER_MNEMONIC environment variable not set');
+    }
+
     // Get admin wallet for Bitcoin
     const adminWallet = await AdminWallet.findOne({
         chainType: CHAIN_TYPES.BITCOIN,
+        network: NETWORKS.BITCOIN,
         isActive: true
     }).select('+derivationPath');
 
@@ -318,87 +329,72 @@ async function sweepSingleBitcoinDeposit(deposit) {
         throw new Error('No active Bitcoin admin wallet found');
     }
 
-    // Get UTXOs for user wallet
-    const utxos = await getUTXOs(wallet.address);
-
-    if (!utxos || utxos.length === 0) {
-        throw new Error('No UTXOs found for wallet');
-    }
-
-    // Create transaction
-    const psbt = new bitcoin.Psbt({ network: BITCOIN_NETWORK });
-
-    // Add inputs from UTXOs
-    let totalInput = 0;
-    for (const utxo of utxos) {
-        psbt.addInput({
-            hash: utxo.txid,
-            index: utxo.vout,
-            witnessUtxo: {
-                script: bitcoin.address.toOutputScript(wallet.address, BITCOIN_NETWORK),
-                value: utxo.value
-            }
-        });
-        totalInput += utxo.value;
-    }
-
-    // Estimate fee (1 input + 1 output = ~140 vBytes for P2WPKH)
-    const feeRate = await estimateFee();
-    const estimatedSize = utxos.length * 68 + 34 + 10; // More accurate estimation
-    const fee = feeRate * estimatedSize;
-
-    // Calculate amount to send (total - fee)
-    const amountToSend = totalInput - fee;
-
-    if (amountToSend <= 0) {
-        throw new Error('Insufficient balance to cover transaction fees');
-    }
-
-    // Add output to admin wallet
-    psbt.addOutput({
-        address: adminWallet.address,
-        value: amountToSend
+    // Use the agnostic btcTransfer function to sweep the deposit
+    const transferResult = await btcTransfer({
+        apiUrl: BTC_API_URL,
+        fromAddress: wallet.address,
+        toAddress: adminWallet.address,
+        mnemonic: process.env.MASTER_MNEMONIC,
+        derivationPath: wallet.derivationPath,
+        amount: deposit.amountSmallest,
+        options: {
+            minConfirmations: MIN_CONFIRMATIONS,
+            sweepAll: true // Sweep all funds minus fees
+        }
     });
 
-    // Sign transaction with user wallet's private key
-    const mnemonic = process.env.MASTER_MNEMONIC;
-    const seed = bip39.mnemonicToSeedSync(mnemonic);
-    const root = bip32.fromSeed(seed, BITCOIN_NETWORK);
-    const child = root.derivePath(wallet.derivationPath);
-    const keyPair = ECPair.fromPrivateKey(child.privateKey, { network: BITCOIN_NETWORK });
+    // Update accounting - wrap in try-catch
+    try {
+        // Convert actual swept amount to BTC
+        const actualSweptAmountSat = transferResult.actualAmount;
+        const actualSweptAmount = toReadableUnit(actualSweptAmountSat.toString(), 8);
 
-    // Sign all inputs
-    for (let i = 0; i < utxos.length; i++) {
-        psbt.signInput(i, keyPair);
+        await addDeposit(
+            deposit.tradingAccount,
+            pair.baseAsset,
+            actualSweptAmount,
+            NETWORKS.BITCOIN
+        );
+
+        // Update admin balance
+        await addAdminBalance(
+            pair.baseAsset,
+            actualSweptAmount,
+            NETWORKS.BITCOIN
+        );
+
+        // Mark deposit as swept
+        deposit.status = DEPOSIT_STATUS.SWEPT;
+        deposit.sweptAt = new Date();
+        deposit.sweepTxHash = transferResult.txHash;
+        deposit.sweptToAdminWallet = adminWallet._id;
+        deposit.actualSweptAmount = actualSweptAmount;
+        deposit.actualSweptAmountSmallest = actualSweptAmountSat.toString();
+        deposit.sweepFee = transferResult.fee;
+        deposit.sweepFeeRate = transferResult.feeRate;
+        await deposit.save();
+
+        console.log(
+            `[sweepSingleBitcoinDeposit] Swept ${actualSweptAmount} BTC to admin wallet. ` +
+            `TX: ${transferResult.txHash}, Fee: ${transferResult.fee} sat (${transferResult.feeRate} sat/vB)`
+        );
+
+    } catch (updateError) {
+        // Transaction succeeded but accounting failed - critical error
+        console.error(
+            `[sweepSingleBitcoinDeposit] CRITICAL: Sweep succeeded but accounting failed for deposit ${deposit._id}. ` +
+            `TX: ${transferResult.txHash}`,
+            updateError
+        );
+
+        // Still mark as swept with the tx hash so we don't try again
+        deposit.status = DEPOSIT_STATUS.SWEPT;
+        deposit.sweptAt = new Date();
+        deposit.sweepTxHash = transferResult.txHash;
+        deposit.sweptToAdminWallet = adminWallet._id;
+        deposit.accountingError = updateError.message;
+        await deposit.save();
+
+        throw new Error(`Accounting failed after successful sweep: ${updateError.message}`);
     }
-
-    // Finalize and extract transaction
-    psbt.finalizeAllInputs();
-    const txHex = psbt.extractTransaction().toHex();
-
-    // Broadcast transaction
-    const txHash = await broadcastTransaction(txHex);
-
-    await addDeposit(
-        deposit.tradingAccount,
-        pair.baseAsset,
-        deposit.amount,
-        NETWORKS.BITCOIN
-    );
-
-    // Update admin balance using utility
-    await addAdminBalance(
-        pair.baseAsset,
-        deposit.amount,
-        NETWORKS.BITCOIN
-    );
-
-    // Mark deposit as swept
-    deposit.status = DEPOSIT_STATUS.SWEPT;
-    deposit.sweptAt = new Date();
-    deposit.sweepTxHash = txHash;
-    deposit.sweptToAdminWallet = adminWallet._id;
-    await deposit.save();
-
-    console.log(`[sweepSingleBitcoinDeposit] Swept ${deposit.amount} ${pair.symbol} to admin wallet. TX: ${txHash}`);
 }

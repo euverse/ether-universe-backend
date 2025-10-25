@@ -1,9 +1,8 @@
-import { model, Schema } from 'mongoose';
-import { ACCOUNT_TYPES } from './TradingAccount.js';
+import { Schema } from 'mongoose';
 
 export const USER_AUTH_STATUSES = {
     ACTIVE: 'active',
-    FROZEN: 'frozen',
+    FREEZED: 'freezed',
     SUSPENDED: 'suspended'
 }
 
@@ -137,12 +136,7 @@ const userSchema = new Schema({
             }
         }
     },
-    status: {
-        type: String,
-        enum: ['active', 'freezed', 'suspended', 'banned'],
-        default: 'active'
-    },
-    customAttributes: {
+    attrs: {
         type: Schema.Types.Mixed,
         default: {}
     },

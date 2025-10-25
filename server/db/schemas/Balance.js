@@ -47,6 +47,8 @@ const balanceSchema = new Schema({
         default: '0'
     },
     lastDepositAt: Date,
+    lastLockedAt: Date,
+    lastUnlockedAt: Date,
     lastWithdrawalAt: Date,
     lastOnchainSyncAt: Date
 }, {

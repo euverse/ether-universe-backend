@@ -1,11 +1,12 @@
 import { createError } from "h3";
+import { MESSAGE_TYPES } from "../../../../db/schemas/Chat";
 
 export default defineEventHandler(async event => {
   const sessionAdmin = event.context.auth.admin;
   const Admin = getModel('Admin');
-  
+
   const admin = await Admin.findById(sessionAdmin?._id).select('fullName avatarUrl');
-  
+
   if (!admin) {
     throw createError({
       statusCode: 401,
@@ -36,39 +37,36 @@ export default defineEventHandler(async event => {
         }
       }
     ]);
-    
+
     // Populate the result
     await Chat.populate(result[0], [
       {
         path: 'user',
-        select: '_id personalInfo avatarUrl'
-      },
-      {
-        path: 'messages.author',
-        select: 'personalInfo fullName avatarUrl'
+        select: '_id id personalInfo avatarUrl auth.status attrs'
       }
     ]);
-    
+
     return result[0];
   });
 
-  // Safety check
-  if (!chat || !chat.user) {
-    throw createError({
-      statusCode: 404,
-      message: 'Chat or user not found'
-    });
-  }
+
+
+  const userName = `${chat.user.personalInfo?.firstName || 'Unverified User'}`
 
   return {
+    user: {
+      _id: chat.user._id,
+      id: chat.user.id,
+      status: chat.user.auth.status,
+      attrs: chat.user.attrs,
+      avatarUrl: chat.user.avatarUrl
+    },
     currentUser: {
       _id: admin._id,
-      fullName: admin.fullName,
-      avatarUrl: admin.avatarUrl,
     },
     otherUser: {
       _id: chat.user._id,
-      fullName: `${chat.user.personalInfo?.firstName || 'Not Set'} ${chat.user.personalInfo?.lastName || 'Not Set'}`,
+      fullName: userName,
       avatarUrl: chat.user.avatarUrl,
     },
     messages: chat.messages?.map(message => ({
@@ -77,9 +75,10 @@ export default defineEventHandler(async event => {
       attachments: message.attachments || [],
       author: {
         _id: message.author._id,
-        fullName: message?.author.fullName || 
-          `${message?.author.personalInfo?.firstName || ''} ${message?.author.personalInfo?.lastName || ''}`.trim() || 'N/A',
-        avatarUrl: message.author.avatarUrl,
+        ...(message.type == MESSAGE_TYPES.USER && {
+          fullName: userName,
+          avatarUrl: chat.user.avatarUrl
+        })
       },
       createdAt: message.createdAt,
       deliveredAt: message.deliveredAt,

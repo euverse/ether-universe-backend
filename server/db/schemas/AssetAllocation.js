@@ -12,7 +12,7 @@ const assetAllocationSchema = new Schema(
             ref: 'TradingAccount',
             required: true
         },
-        pairId: {
+        pair: {
             type: Schema.Types.ObjectId,
             ref: 'TradingPair',
             required: true
@@ -21,57 +21,25 @@ const assetAllocationSchema = new Schema(
             type: Number,
             required: true
         },
-        status: {
-            type: String,
-            enum: ['active', 'expired', 'withdrawn'],
-            default: 'active'
-        },
-        allocatedAt: {
-            type: Date,
-            default: Date.now
-        },
         expiresAt: {
             type: Date,
-            required: true
-        },
-        withdrawnAt: {
-            type: Date
-        },
-        profitDuringPeriod: {
-            type: Number,
-            default: 0
+            default: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
         }
     },
     {
-        timestamps: true
+        timestamps: true,
+        toObject: { virtuals: true },
+        toJSON: { virtuals: true }
     }
 );
 
-assetAllocationSchema.index({ user: 1, status: 1 });
-assetAllocationSchema.index({ expiresAt: 1, status: 1 });
+assetAllocationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-assetAllocationSchema.virtual('isActive').get(function() {
-    return this.status === 'active' && this.expiresAt > new Date();
+assetAllocationSchema.index({ user: 1, pair: 1 });
+
+assetAllocationSchema.virtual('timeRemaining').get(function () {
+    const remaining = this.expiresAt.getTime() - Date.now() || 0;
+    return remaining;
 });
-
-assetAllocationSchema.virtual('timeRemaining').get(function() {
-    if (this.status !== 'active') return 0;
-    const remaining = this.expiresAt.getTime() - Date.now();
-    return remaining > 0 ? remaining : 0;
-});
-
-assetAllocationSchema.methods.getFormattedTimeRemaining = function() {
-    const ms = this.timeRemaining;
-    if (ms <= 0) return '00:00:00';
-    
-    const hours = Math.floor(ms / 3600000);
-    const minutes = Math.floor((ms % 3600000) / 60000);
-    const seconds = Math.floor((ms % 60000) / 1000);
-    
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-};
-
-assetAllocationSchema.set('toObject', { virtuals: true });
-assetAllocationSchema.set('toJSON', { virtuals: true });
 
 export default assetAllocationSchema;

@@ -2,8 +2,8 @@ import { Schema } from 'mongoose'
 
 export const MESSAGE_TYPES = {
   SYSTEM: 'system',
-  ADMIN: 'admin',
-  USER: 'user'
+  ADMIN: 'Admin',
+  USER: 'User'
 }
 
 export const MESSAGE_STATUSES = {
