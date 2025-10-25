@@ -58,9 +58,8 @@ export default defineEventHandler(async (event) => {
 
             const Chat = getModel('Chat');
 
-            const unreadMessages = (await Chat.findOne({ user: user._id }).select('messages').lean())
-                .messages.filter(message => !message.seenAt)
-                .length;
+            const userChat = await Chat.findOne({ user: user._id }).select('messages').lean()
+            const unreadMessages = userChat ? userChat.messages.filter(message => !message.seenAt).length : 0
 
             const userFullName = user.personalInfo?.firstName ? `${user.personalInfo?.firstName} ${user.personalInfo?.lastName || ''}` : 'Unverified User';
 
