@@ -5,7 +5,7 @@ export default defineEventHandler(async (event) => {
         const query = getQuery(event);
         const offset = parseInt(query.offset) || 0;
         const limit = parseInt(query.limit) || 20;
-        const search = query.search || '';
+        const search = query.query || '';
         const kycStatus = query.kycStatus || '';
         const accountStatus = query.accountStatus || '';
 
@@ -16,8 +16,8 @@ export default defineEventHandler(async (event) => {
         let filter = {};
         if (search) {
             filter.$or = [
-                { firstName: { $regex: search, $options: 'i' } },
-                { lastName: { $regex: search, $options: 'i' } },
+                { "personalInfo.firstName": { $regex: search, $options: 'i' } },
+                { "personalInfo.lastName": { $regex: search, $options: 'i' } },
                 { email: { $regex: search, $options: 'i' } }
             ];
         }

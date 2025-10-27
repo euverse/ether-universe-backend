@@ -240,7 +240,7 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
                 logger.log(` New deposit detected: ${newDepositAmount} ${pair.symbol} on ${network}`);
 
             } catch (pairError) {
-                logger.error(` Error scanning pair ${pair.symbol}:`, pairError.message);
+                logger.error(` Error scanning pair ${pair.symbol}: ${pairError.message}`);
             }
         }
 
@@ -265,7 +265,6 @@ export async function scanAllEVMWalletsForDeposits() {
         // Get all active EVM wallets
         const wallets = await Wallet.find({
             chainType: CHAIN_TYPES.EVM,
-            isActive: true
         });
 
         const results = {
@@ -297,7 +296,7 @@ export async function scanAllEVMWalletsForDeposits() {
         return results;
 
     } catch (error) {
-        logger.error('Error:', error);
+        logger.error(`Error ${error.message}`);
         return { scanned: 0, found: 0, deposits: [] };
     }
 }

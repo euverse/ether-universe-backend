@@ -142,7 +142,7 @@ export async function scanBitcoinWalletForDeposits(wallet) {
         logger.log(`New deposit detected: ${newDepositAmount} BTC`);
 
     } catch (error) {
-        logger.error(`Error scanning wallet ${wallet._id}:`, error);
+        logger.error(`Error scanning wallet ${wallet._id}: ${error}`);
     }
 
     return deposits;
@@ -177,7 +177,7 @@ export async function scanAllBitcoinWalletsForDeposits() {
         return results;
 
     } catch (error) {
-        logger.error('Error:', error);
+        logger.error(`Error: ${error.message}`);
         return { scanned: 0, found: 0, deposits: [] };
     }
 }
@@ -255,7 +255,7 @@ export async function sweepPendingBitcoinDeposits() {
                     status: 'failed',
                     error: error.message
                 });
-                logger.error(`Failed to sweep deposit ${deposit._id}:`, error);
+                logger.error(`Failed to sweep deposit ${deposit._id}: ${error.message}`);
             }
         }
 
@@ -264,7 +264,7 @@ export async function sweepPendingBitcoinDeposits() {
         return results;
 
     } catch (error) {
-        logger.error('Error:', error);
+        logger.error(`Error: ${error.message}`);
         return { swept: 0, failed: 0, details: [] };
     }
 }
@@ -298,14 +298,14 @@ export async function retryFailedBitcoinDeposits() {
                 results.retried++;
                 logger.log(`Retrying deposit ${deposit._id} (attempt ${deposit.retryCount})`);
             } catch (error) {
-                logger.error(`Failed to retry deposit ${deposit._id}:`, error);
+                logger.error(`Failed to retry deposit ${deposit._id}: ${error.message}`);
             }
         }
 
         return results;
 
     } catch (error) {
-        logger.error(`Error: ${error}`);
+        logger.error(`Error: ${error.message}`);
         return { retried: 0, succeeded: 0, failed: 0 };
     }
 }

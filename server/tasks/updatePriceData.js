@@ -231,7 +231,6 @@ const updatePairPriceData = async (priceDataDoc, pair) => {
 
 // Initialize uninitialized price data records
 async function initializeUninitializedPriceData() {
-    initializePriceDataLogger.initialize({});
 
     const PriceData = model("PriceData");
 
