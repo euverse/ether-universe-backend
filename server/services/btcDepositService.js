@@ -1,5 +1,6 @@
 import { CHAIN_TYPES, NETWORKS } from '~/db/schemas/Network.js';
 import { DEPOSIT_STATUS } from '~/db/schemas/Deposit.js';
+import { btcDepositScanLogger, btcSweepLogger } from './logService';
 
 const Pair = getModel('Pair');
 const Wallet = getModel('Wallet');
@@ -18,6 +19,8 @@ const MIN_BTC_THRESHOLD = '0.0001'; // 10,000 satoshis
 // Minimum confirmations required for UTXOs (0 = unconfirmed accepted)
 const MIN_CONFIRMATIONS = 0;
 
+const logger = btcDepositScanLogger || console;
+
 /**
  * Calculate total pending deposit amount
  */
@@ -29,7 +32,7 @@ async function getPendingDepositAmount(walletId, pairId, network) {
         status: { $in: [DEPOSIT_STATUS.PENDING, DEPOSIT_STATUS.PROCESSING] }
     });
 
-    const total = pendingDeposits.reduce((total, deposit) => add(total, deposit.amountSmallest), '0');
+    const total = pendingDeposits.reduce((sum, deposit) => add(sum, deposit.amountSmallest), '0');
 
     return total;
 }
@@ -49,7 +52,7 @@ export async function scanBitcoinWalletForDeposits(wallet) {
         });
 
         if (!btcPair) {
-            console.warn('[scanBitcoinWalletForDeposits] BTC pair not found');
+            logger.warn('BTC pair not found');
             return deposits;
         }
 
@@ -118,7 +121,7 @@ export async function scanBitcoinWalletForDeposits(wallet) {
         });
 
         if (recentDuplicate) {
-            console.log(`[scanBitcoinWalletForDeposits] Skipping duplicate deposit for ${wallet.address}`);
+            logger.log(`Skipping duplicate deposit for ${wallet.address}`);
             return deposits;
         }
 
@@ -136,10 +139,10 @@ export async function scanBitcoinWalletForDeposits(wallet) {
 
         deposits.push(deposit);
 
-        console.log(`[scanBitcoinWalletForDeposits] New deposit detected: ${newDepositAmount} BTC`);
+        logger.log(`New deposit detected: ${newDepositAmount} BTC`);
 
     } catch (error) {
-        console.error(`[scanBitcoinWalletForDeposits] Error scanning wallet ${wallet._id}:`, error);
+        logger.error(`Error scanning wallet ${wallet._id}:`, error);
     }
 
     return deposits;
@@ -169,12 +172,12 @@ export async function scanAllBitcoinWalletsForDeposits() {
             results.scanned++;
         }
 
-        console.log(`[scanAllBitcoinWalletsForDeposits] Completed: ${results.scanned} scans, ${results.found} deposits found`);
+        logger.log(`Completed: ${results.scanned} scans, ${results.found} deposits found`);
 
         return results;
 
     } catch (error) {
-        console.error('[scanAllBitcoinWalletsForDeposits] Error:', error);
+        logger.error('Error:', error);
         return { scanned: 0, found: 0, deposits: [] };
     }
 }
@@ -199,14 +202,14 @@ export async function sweepPendingBitcoinDeposits() {
         for (const deposit of depositsToSweep) {
             // Validate populated fields
             if (!deposit.wallet || !deposit.pair || !deposit.balance) {
-                console.error(`[sweepPendingBitcoinDeposits] Invalid deposit ${deposit._id}: missing populated fields`);
+                logger.error(`Invalid deposit ${deposit._id}: missing populated fields`);
                 results.failed++;
                 continue;
             }
 
             // Validate amountSmallest exists
             if (!deposit.amountSmallest || compare(deposit.amountSmallest, '0') <= 0) {
-                console.error(`[sweepPendingBitcoinDeposits] Invalid deposit ${deposit._id}: invalid amountSmallest`);
+                logger.error(`Invalid deposit ${deposit._id}: invalid amountSmallest`);
                 results.failed++;
                 continue;
             }
@@ -217,10 +220,12 @@ export async function sweepPendingBitcoinDeposits() {
                     { _id: deposit._id, status: DEPOSIT_STATUS.PENDING },
                     { $set: { status: DEPOSIT_STATUS.PROCESSING } },
                     { new: true }
-                );
+                )
+                    .populate('wallet')
+                    .exec();
 
                 if (!updated) {
-                    console.log(`[sweepPendingBitcoinDeposits] Deposit ${deposit._id} already being processed`);
+                    logger.log(`Deposit ${deposit._id} already being processed`);
                     continue;
                 }
 
@@ -250,16 +255,16 @@ export async function sweepPendingBitcoinDeposits() {
                     status: 'failed',
                     error: error.message
                 });
-                console.error(`[sweepPendingBitcoinDeposits] Failed to sweep deposit ${deposit._id}:`, error);
+                logger.error(`Failed to sweep deposit ${deposit._id}:`, error);
             }
         }
 
-        console.log(`[sweepPendingBitcoinDeposits] Completed: ${results.swept} swept, ${results.failed} failed`);
+        logger.log(`Completed: ${results.swept} swept, ${results.failed} failed`);
 
         return results;
 
     } catch (error) {
-        console.error('[sweepPendingBitcoinDeposits] Error:', error);
+        logger.error('Error:', error);
         return { swept: 0, failed: 0, details: [] };
     }
 }
@@ -291,16 +296,16 @@ export async function retryFailedBitcoinDeposits() {
                 await deposit.save();
 
                 results.retried++;
-                console.log(`[retryFailedBitcoinDeposits] Retrying deposit ${deposit._id} (attempt ${deposit.retryCount})`);
+                logger.log(`Retrying deposit ${deposit._id} (attempt ${deposit.retryCount})`);
             } catch (error) {
-                console.error(`[retryFailedBitcoinDeposits] Failed to retry deposit ${deposit._id}:`, error);
+                logger.error(`Failed to retry deposit ${deposit._id}:`, error);
             }
         }
 
         return results;
 
     } catch (error) {
-        console.error('[retryFailedBitcoinDeposits] Error:', error);
+        logger.error(`Error: ${error}`);
         return { retried: 0, succeeded: 0, failed: 0 };
     }
 }
@@ -310,6 +315,7 @@ export async function retryFailedBitcoinDeposits() {
  * Now uses the agnostic btcTransfer function
  */
 async function sweepSingleBitcoinDeposit(deposit) {
+    const sweepLogger = btcSweepLogger || console;
     const wallet = deposit.wallet;
     const pair = deposit.pair;
 
@@ -374,15 +380,15 @@ async function sweepSingleBitcoinDeposit(deposit) {
         deposit.sweepFeeRate = transferResult.feeRate;
         await deposit.save();
 
-        console.log(
-            `[sweepSingleBitcoinDeposit] Swept ${actualSweptAmount} BTC to admin wallet. ` +
+        sweepLogger.log(
+            `Swept ${actualSweptAmount} BTC to admin wallet. ` +
             `TX: ${transferResult.txHash}, Fee: ${transferResult.fee} sat (${transferResult.feeRate} sat/vB)`
         );
 
     } catch (updateError) {
         // Transaction succeeded but accounting failed - critical error
-        console.error(
-            `[sweepSingleBitcoinDeposit] CRITICAL: Sweep succeeded but accounting failed for deposit ${deposit._id}. ` +
+        sweepLogger.error(
+            `CRITICAL: Sweep succeeded but accounting failed for deposit ${deposit._id}. ` +
             `TX: ${transferResult.txHash}`,
             updateError
         );

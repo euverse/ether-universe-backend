@@ -3,7 +3,7 @@ import { WITHDRAWAL_STATUSES } from "~/db/schemas/UserWithdrawal";
 export default defineEventHandler(async (event) => {
     try {
         const query = getQuery(event);
-        const page = parseInt(query.page) || 1;
+        const offset = parseInt(query.offset) || 0;
         const limit = parseInt(query.limit) || 20;
         const status = query.status || WITHDRAWAL_STATUSES.PENDING;
 
@@ -11,23 +11,21 @@ export default defineEventHandler(async (event) => {
 
         const filter = { status };
 
-        const skip = (page - 1) * limit;
         const withdrawals = await UserWithdrawal.find(filter)
             .populate("user pair")
             .sort({ createdAt: -1 })
-            .skip(skip)
+            .skip(offset)
             .limit(limit)
             .lean();
 
-        const totalItems = await UserWithdrawal.countDocuments(filter);
-        const totalPages = Math.ceil(totalItems / limit);
+        const totalWithdrawals = await UserWithdrawal.countDocuments(filter);
 
         return {
             withdrawals: withdrawals.map(formatWithdrawal),
             pagination: {
-                currentPage: page,
-                totalPages,
-                totalItems,
+                currentPage: Math.floor(offset / limit) + 1,
+                totalPages: Math.ceil(totalWithdrawals / limit),
+                totalItems: totalWithdrawals,
                 itemsPerPage: limit
             }
         };

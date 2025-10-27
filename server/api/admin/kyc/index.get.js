@@ -39,7 +39,7 @@ export default defineEventHandler(async (event) => {
             .limit(limit)
             .lean();
 
-        const total = await User.countDocuments(filter);
+        const totalKycs = await User.countDocuments(filter);
 
         // Enrich users with KYC document type and unread messages
         const enrichedUsers = await Promise.all(users.map(async (user) => {
@@ -68,9 +68,10 @@ export default defineEventHandler(async (event) => {
         return {
             submissions: enrichedUsers,
             pagination: {
-                offset,
-                total,
-                limit
+                currentPage: Math.floor(offset / limit) + 1,
+                totalPages: Math.ceil(totalKycs / limit),
+                totalItems: totalKycs,
+                itemsPerPage: limit
             }
         };
     } catch (error) {

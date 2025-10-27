@@ -3,7 +3,7 @@
 export default defineEventHandler(async (event) => {
     try {
         const query = getQuery(event);
-        const page = parseInt(query.page) || 1;
+        const offset = parseInt(query.offset) || 0;
         const limit = parseInt(query.limit) || 20;
         const search = query.search || '';
         const kycStatus = query.kycStatus || '';
@@ -26,16 +26,14 @@ export default defineEventHandler(async (event) => {
             filter.accountStatus = accountStatus;
         }
 
-        const skip = (page - 1) * limit;
         const users = await User.find(filter)
-            .select('personalInfo.firstName personalInfo.lastName email auth.status createdAt auth.lastLoggedInAt')
+            .select('personalInfo.firstName personalInfo.lastName email auth.status auth.lastLoggedInAt trading.biasedPositive createdAt')
             .sort({ createdAt: -1 })
-            .skip(skip)
+            .skip(offset)
             .limit(limit)
             .lean();
 
-        const totalItems = await User.countDocuments(filter);
-        const totalPages = Math.ceil(totalItems / limit);
+        const totalUsers = await User.countDocuments(filter);
 
         const enrichedUsers = await Promise.all(users.map(async (user) => {
 
@@ -71,6 +69,7 @@ export default defineEventHandler(async (event) => {
                 userStatus: user.auth.status || 'active',
                 balanceUsd: Math.round(totalBalanceUsd),
                 unreadMessages,
+                biasedPositive: user.trading.biasedPositive ?? false,
                 createdAt: user.createdAt,
                 lastLogin: user.auth.lastLoggedInAt
             };
@@ -81,9 +80,9 @@ export default defineEventHandler(async (event) => {
         return {
             users: filteredUsers,
             pagination: {
-                currentPage: page,
-                totalPages,
-                totalItems,
+                currentPage: Math.floor(offset / limit) + 1,
+                totalPages: Math.ceil(totalUsers / limit),
+                totalItems: totalUsers,
                 itemsPerPage: limit
             }
         };

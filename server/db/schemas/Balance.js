@@ -42,6 +42,10 @@ const balanceSchema = new Schema({
         type: String,
         default: '0'
     },
+    totalPnL: {
+        type: String,
+        default: '0'
+    },
     totalWithdrawn: {
         type: String,
         default: '0'
@@ -49,6 +53,7 @@ const balanceSchema = new Schema({
     lastDepositAt: Date,
     lastLockedAt: Date,
     lastUnlockedAt: Date,
+    lastSettledAt:Date,
     lastWithdrawalAt: Date,
     lastOnchainSyncAt: Date
 }, {

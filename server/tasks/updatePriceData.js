@@ -1,4 +1,5 @@
 import { model } from "mongoose";
+import { initializePriceDataLogger, priceDataUpdateLogger, updateAllPairsLogger, updateHighPriorityPairsLogger } from "../services/logService";
 
 // Map symbol to CoinGecko ID
 const getCoinGeckoId = (symbol) => {
@@ -41,6 +42,8 @@ const getVsCurrency = (quoteAsset) => {
     return currencyMap[quoteAsset.toUpperCase()] || 'usd';
 };
 
+
+
 // Fetch price data from CoinGecko with API key
 const fetchCoinGeckoPriceData = async (coinId, vsCurrency, fromTimestamp, toTimestamp) => {
     try {
@@ -71,7 +74,7 @@ const fetchCoinGeckoPriceData = async (coinId, vsCurrency, fromTimestamp, toTime
             price
         ]);
     } catch (error) {
-        console.error(`CoinGecko API Error for ${coinId}:`, error.message);
+        priceDataUpdateLogger.error(`CoinGecko API Error for ${coinId}: ${error.message}`);
         return [];
     }
 };
@@ -97,6 +100,8 @@ const aggregateTo1Minute = (priceData) => {
         .sort((a, b) => a[0] - b[0]);
 };
 
+
+
 // Initialize price data for a single pair (fetch up to 1 year of historical data)
 const initializePairPriceData = async (priceDataDoc, pair) => {
     try {
@@ -108,7 +113,7 @@ const initializePairPriceData = async (priceDataDoc, pair) => {
         const oneYearAgo = now - (365 * 24 * 60 * 60);
         const sixMonthsInSeconds = 180 * 24 * 60 * 60; // 6 months = 180 days
 
-        console.log(`Initializing ${pair.baseAsset}/${pair.quoteAsset} with 1 year of data...`);
+        initializePriceDataLogger.log(`Initializing ${pair.baseAsset}/${pair.quoteAsset} with 1 year of data...`);
 
         let allPriceData = [];
 
@@ -116,7 +121,7 @@ const initializePairPriceData = async (priceDataDoc, pair) => {
         for (let start = oneYearAgo; start < now; start += sixMonthsInSeconds) {
             const end = Math.min(start + sixMonthsInSeconds, now);
 
-            console.log(`  Fetching chunk: ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`);
+            initializePriceDataLogger.log(`Fetching chunk: ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`);
 
             const chunkData = await fetchCoinGeckoPriceData(coinId, vsCurrency, start, end);
 
@@ -129,7 +134,7 @@ const initializePairPriceData = async (priceDataDoc, pair) => {
         }
 
         if (allPriceData.length === 0) {
-            console.warn(`No data fetched for ${pair.baseAsset}/${pair.quoteAsset}`);
+            initializePriceDataLogger.warn(`No data fetched for ${pair.baseAsset}/${pair.quoteAsset}`);
             return 0;
         }
 
@@ -143,11 +148,11 @@ const initializePairPriceData = async (priceDataDoc, pair) => {
 
         await priceDataDoc.save();
 
-        console.log(`✓ Initialized ${aggregatedData.length} data points for ${pair.baseAsset}/${pair.quoteAsset}`);
+        initializePriceDataLogger.success(`Initialized ${aggregatedData.length} data points for ${pair.baseAsset}/${pair.quoteAsset}`);
         return aggregatedData.length;
 
     } catch (error) {
-        console.error(`Error initializing ${pair.baseAsset}/${pair.quoteAsset}:`, error.message);
+        initializePriceDataLogger.error(`Error initializing ${pair.baseAsset}/${pair.quoteAsset}: ${error.message}`);
         return 0;
     }
 };
@@ -197,7 +202,7 @@ const updatePairPriceData = async (priceDataDoc, pair) => {
                 // Get fresh document
                 const freshDoc = await PriceData.findById(priceDataDoc._id);
                 if (!freshDoc) {
-                    console.error(`PriceData document not found: ${priceDataDoc._id}`);
+                    priceDataUpdateLogger.error(`PriceData document not found: ${priceDataDoc._id}`);
                     return 0;
                 }
 
@@ -218,14 +223,15 @@ const updatePairPriceData = async (priceDataDoc, pair) => {
 
         return 0;
     } catch (error) {
-        console.error(`Error updating ${pair.baseAsset}/${pair.quoteAsset}:`, error.message);
+        priceDataUpdateLogger.error(`Error updating ${pair.baseAsset}/${pair.quoteAsset}: ${error.message} `);
         return 0;
     }
 };
 
+
 // Initialize uninitialized price data records
 async function initializeUninitializedPriceData() {
-    console.log('=============== INITIALIZING PRICE DATA ===============');
+    initializePriceDataLogger.initialize({});
 
     const PriceData = model("PriceData");
 
@@ -238,11 +244,11 @@ async function initializeUninitializedPriceData() {
             .populate('pair', 'baseAsset quoteAsset');
 
         if (uninitializedRecords.length === 0) {
-            console.log('All price data records are initialized');
+            initializePriceDataLogger.log('All price data records are initialized');
             return;
         }
 
-        console.log(`Found ${uninitializedRecords.length} uninitialized records`);
+        initializePriceDataLogger.log(`Found ${uninitializedRecords.length} uninitialized records`);
 
         for (const record of uninitializedRecords) {
             if (!record.pair) continue;
@@ -251,12 +257,12 @@ async function initializeUninitializedPriceData() {
                 const pointsAdded = await initializePairPriceData(record, record.pair);
 
                 if (pointsAdded > 0) {
-                    console.log(`✓ Initialized ${record.pair.baseAsset}/${record.pair.quoteAsset} with ${pointsAdded} points`);
+                    initializePriceDataLogger.success(`Initialized ${record.pair.baseAsset}/${record.pair.quoteAsset} with ${pointsAdded} points`);
                 } else {
-                    console.warn(`⚠️  Failed to initialize ${record.pair.baseAsset}/${record.pair.quoteAsset}`);
+                    initializePriceDataLogger.warn(`Failed to initialize ${record.pair.baseAsset}/${record.pair.quoteAsset}`);
                 }
             } catch (error) {
-                console.error(`❌ Error initializing ${record.pair.baseAsset}/${record.pair.quoteAsset}:`, error.message);
+                initializePriceDataLogger.error(`Error initializing ${record.pair.baseAsset}/${record.pair.quoteAsset}:`, error.message);
                 // Continue with next pair even if this one fails
             }
 
@@ -264,19 +270,19 @@ async function initializeUninitializedPriceData() {
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
-        console.log('=============== INITIALIZATION COMPLETE ===============\n');
     } catch (error) {
-        console.error('Error in initialization task:', error);
-        console.log('=============== INITIALIZATION COMPLETE ===============\n');
+        initializePriceDataLogger.error(`Error in initialization task ${error}`);
+    } finally {
+        initializePriceDataLogger.complete()
     }
 }
 
+
 // Update high-priority (frequently accessed) pairs
 async function updateHighPriorityPairs() {
-    console.log('=============== UPDATING HIGH-PRIORITY PAIRS ===============');
+    updateHighPriorityPairsLogger.start();
 
     const PriceData = model("PriceData");
-    const Pair = model("Pair");
 
     try {
         // Get top 20 most accessed pairs that are FULLY INITIALIZED
@@ -289,11 +295,11 @@ async function updateHighPriorityPairs() {
             .populate('pair', 'baseAsset quoteAsset');
 
         if (highPriorityRecords.length === 0) {
-            console.log('No initialized records found');
+            updateHighPriorityPairsLogger.log('No initialized records found');
             return;
         }
 
-        console.log(`Updating ${highPriorityRecords.length} high-priority pairs`);
+        updateHighPriorityPairsLogger.log(`Updating ${highPriorityRecords.length} high-priority pairs`);
 
         let updatedCount = 0;
 
@@ -304,27 +310,28 @@ async function updateHighPriorityPairs() {
 
             if (newPointsCount > 0) {
                 updatedCount++;
-                console.log(`✓ Updated ${record.pair.baseAsset}/${record.pair.quoteAsset} (+${newPointsCount} points)`);
+                updateHighPriorityPairsLogger.success(`Updated ${record.pair.baseAsset}/${record.pair.quoteAsset} (+${newPointsCount} points)`);
             }
 
             // Rate limit: 2 seconds between requests (30 calls/min)
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
-        console.log(`Updated ${updatedCount} high-priority pairs`);
-        console.log('=============== HIGH-PRIORITY UPDATE COMPLETE ===============\n');
+        updateHighPriorityPairsLogger.success(`Updated ${updatedCount} high-priority pairs`);
     } catch (error) {
-        console.error('Error updating high-priority pairs:', error);
-        console.log('=============== HIGH-PRIORITY UPDATE COMPLETE ===============\n');
+        updateHighPriorityPairsLogger.error(`Error updating high-priority pairs: ${error.message}`);
+    } finally {
+        updateHighPriorityPairsLogger.complete()
     }
 }
 
+
+
 // Update all initialized pairs (less frequent)
 async function updateAllPairs() {
-    console.log('=============== UPDATING ALL PAIRS ===============');
+    updateAllPairsLogger.start();
 
     const PriceData = model("PriceData");
-    const Pair = model("Pair");
 
     try {
         const allRecords = await PriceData.find({
@@ -336,11 +343,11 @@ async function updateAllPairs() {
             .populate('pair', 'baseAsset quoteAsset');
 
         if (allRecords.length === 0) {
-            console.log('No initialized records found');
+            updateAllPairsLogger.log('No initialized records found');
             return;
         }
 
-        console.log(`Updating ${allRecords.length} pairs`);
+        updateAllPairsLogger.log(`Updating ${allRecords.length} pairs`);
 
         let updatedCount = 0;
 
@@ -357,11 +364,11 @@ async function updateAllPairs() {
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
-        console.log(`Updated ${updatedCount} pairs`);
-        console.log('=============== ALL PAIRS UPDATE COMPLETE ===============\n');
+        updateAllPairsLogger.success(`Updated ${updatedCount} pairs`);
     } catch (error) {
-        console.error('Error updating all pairs:', error);
-        console.log('=============== ALL PAIRS UPDATE COMPLETE ===============\n');
+        updateAllPairsLogger.error(`Error updating all pairs: ${error}`);
+    } finally {
+        updateAllPairsLogger.complete();
     }
 }
 
@@ -387,11 +394,9 @@ export function initializePriceDataTasks(agenda) {
     agenda.every('35 minutes', 'update-high-priority-pairs');
     agenda.every('2 hours', 'update-all-pairs');
 
-    console.log('=============== PRICE DATA TASKS INITIALIZED ===============');
-    console.log('Task: initialize-price-data - Every 10 minutes');
-    console.log('Task: update-high-priority-pairs - Every 2 minutes');
-    console.log('Task: update-all-pairs - Every 15 minutes');
-    console.log('=======================================================\n');
+    initializePriceDataLogger.initialize({ frequency: '10 minutes' })
+    updateHighPriorityPairsLogger.initialize({ frequency: '35 minutes' })
+    updateAllPairsLogger.initialize({ frequency: '2 hours' })
 
     // Run initialization immediately
     agenda.now('initialize-price-data');

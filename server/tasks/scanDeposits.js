@@ -7,6 +7,8 @@ import {
     scanAllEVMWalletsForDeposits,
     sweepPendingDeposits
 } from "../services/evmDepositsService";
+import { btcDepositScanLogger, btcSweepLogger, evmDepositScanLogger, evmSweepLogger } from "../services/logService";
+
 
 /**
  * Initialize all deposit scanning and sweeping tasks
@@ -16,9 +18,7 @@ export function initializeDepositScanTasks(agenda) {
     initializeAllBitcoinAgendaTasks(agenda);
 }
 
-// ============================================
 // EVM TASKS
-// ============================================
 
 /**
  * Initialize all EVM agenda tasks
@@ -28,6 +28,8 @@ export function initializeAllEVMAgendaTasks(agenda) {
     initializeEVMSweepTask(agenda);
 }
 
+
+
 /**
  * Scan EVM wallets for deposits using balance-based approach
  * Runs every 3 minutes (much less frequent than before!)
@@ -35,32 +37,29 @@ export function initializeAllEVMAgendaTasks(agenda) {
 export function initializeEVMDepositScannerTask(agenda) {
     agenda.define('scan-evm-deposits', async (job) => {
         try {
-            console.log('[scan-evm-deposits] Starting balance-based deposit scan...');
+            evmDepositScanLogger.start();
             const results = await scanAllEVMWalletsForDeposits();
 
             if (results.found > 0) {
-                console.log(`[scan-evm-deposits] ✅ Found ${results.found} new deposits across ${results.scanned} wallets`);
+                evmDepositScanLogger.success(`Found ${results.found} new deposits across ${results.scanned} wallets`);
             } else {
-                console.log(`[scan-evm-deposits] No new deposits found (${results.scanned} wallets scanned)`);
+                evmDepositScanLogger.log(`No new deposits found (${results.scanned} wallets scanned)`);
             }
 
             job.attrs.lastRun = new Date();
         } catch (error) {
-            console.error('[scan-evm-deposits] ❌ Error:', error);
+            evmDepositScanLogger.error(` Error: ${error.message}`);
             throw error;
         }
     });
 
     agenda.every('3 minutes', 'scan-evm-deposits');
-    console.log('=============== AGENDA TASK INITIALIZED ===============');
-    console.log('Task: scan-evm-deposits');
-    console.log('Interval: 3 minutes (balance-based scanning)');
-    console.log('Description: Efficient balance checking without block scanning');
-    console.log('=======================================================\n');
+    evmDepositScanLogger.initialize({frequency:'3 minutes'});
 
     // Run immediately on startup
     agenda.now('scan-evm-deposits');
 }
+
 
 /**
  * Sweep confirmed EVM deposits to admin wallet
@@ -69,53 +68,47 @@ export function initializeEVMDepositScannerTask(agenda) {
 export function initializeEVMSweepTask(agenda) {
     agenda.define('sweep-evm-deposits', async (job) => {
         try {
-            console.log('[sweep-evm-deposits] Starting sweep process...');
+            evmSweepLogger.start();
             const results = await sweepPendingDeposits();
 
             if (results.swept > 0) {
-                console.log(`[sweep-evm-deposits] ✅ Successfully swept ${results.swept} deposits to admin wallet`);
+                evmSweepLogger.success(`Successfully swept ${results.swept} deposits to admin wallet`);
 
                 // Log details
                 results.details.forEach(detail => {
                     if (detail.status === 'success') {
-                        console.log(`  - ${detail.amount} ${detail.pair} on ${detail.network}`);
+                        evmSweepLogger.success(`  - ${detail.amount} ${detail.pair} on ${detail.network}`);
                     }
                 });
             }
 
             if (results.failed > 0) {
-                console.log(`[sweep-evm-deposits] ⚠️ Failed to sweep ${results.failed} deposits`);
+                evmSweepLogger.warn(`Failed to sweep ${results.failed} deposits`);
 
                 // Log failures
                 results.details.forEach(detail => {
                     if (detail.status === 'failed') {
-                        console.log(`  - ${detail.amount} ${detail.pair} on ${detail.network}: ${detail.error}`);
+                        evmSweepLogger.warn(`  - ${detail.amount} ${detail.pair} on ${detail.network}: ${detail.error}`);
                     }
                 });
             }
 
             if (results.swept === 0 && results.failed === 0) {
-                console.log('[sweep-evm-deposits] No deposits to sweep');
+                evmSweepLogger.log('No deposits to sweep');
             }
 
             job.attrs.lastRun = new Date();
         } catch (error) {
-            console.error('[sweep-evm-deposits] ❌ Error:', error);
+            evmSweepLogger.error(`Error: ${error.message}`);
             throw error;
         }
     });
 
     agenda.every('5 minutes', 'sweep-evm-deposits');
-    console.log('=============== AGENDA TASK INITIALIZED ===============');
-    console.log('Task: sweep-evm-deposits');
-    console.log('Interval: 5 minutes');
-    console.log('Description: Automatically sweep confirmed deposits to admin wallet');
-    console.log('=======================================================\n');
+    evmSweepLogger.initialize({frequency:'5 minutes'});
 }
 
-// ============================================
 // BITCOIN TASKS
-// ============================================
 
 /**
  * Initialize all Bitcoin agenda tasks
@@ -132,31 +125,29 @@ export function initializeAllBitcoinAgendaTasks(agenda) {
 export function initializeBitcoinDepositScannerTask(agenda) {
     agenda.define('scan-bitcoin-deposits', async (job) => {
         try {
-            console.log('[scan-bitcoin-deposits] Starting balance-based deposit scan...');
+            btcDepositScanLogger.start();
             const results = await scanAllBitcoinWalletsForDeposits();
 
             if (results.found > 0) {
-                console.log(`[scan-bitcoin-deposits] ✅ Found ${results.found} new deposits across ${results.scanned} wallets`);
+                btcDepositScanLogger.success(`Found ${results.found} new deposits across ${results.scanned} wallets`);
             } else {
-                console.log(`[scan-bitcoin-deposits] No new deposits found (${results.scanned} wallets scanned)`);
+                btcDepositScanLogger.log(`No new deposits found (${results.scanned} wallets scanned)`);
             }
 
             job.attrs.lastRun = new Date();
         } catch (error) {
-            console.error('[scan-bitcoin-deposits] ❌ Error:', error);
+            btcDepositScanLogger.error(`Error: ${error.message}`);
             throw error;
         }
     });
 
     agenda.every('5 minutes', 'scan-bitcoin-deposits');
-    console.log('=============== AGENDA TASK INITIALIZED ===============');
-    console.log('Task: scan-bitcoin-deposits');
-    console.log('Interval: 5 minutes (balance-based scanning)');
-    console.log('Description: Efficient balance checking for Bitcoin');
-    console.log('=======================================================\n');
+
+    btcDepositScanLogger.initialize({ frequency: '5 minutes' });
 
     agenda.now('scan-bitcoin-deposits');
 }
+
 
 /**
  * Sweep confirmed Bitcoin deposits to admin wallet
@@ -165,49 +156,44 @@ export function initializeBitcoinDepositScannerTask(agenda) {
 export function initializeBitcoinSweepTask(agenda) {
     agenda.define('sweep-bitcoin-deposits', async (job) => {
         try {
-            console.log('[sweep-bitcoin-deposits] Starting sweep process...');
+            btcSweepLogger.start();
             const results = await sweepPendingBitcoinDeposits();
 
             if (results.swept > 0) {
-                console.log(`[sweep-bitcoin-deposits] ✅ Successfully swept ${results.swept} deposits to admin wallet`);
+                btcSweepLogger.success(`Successfully swept ${results.swept} deposits to admin wallet`);
 
                 // Log details
                 results.details.forEach(detail => {
                     if (detail.status === 'success') {
-                        console.log(`  - ${detail.amount} ${detail.pair} on ${detail.network}`);
+                        btcSweepLogger.log(`  - ${detail.amount} ${detail.pair} on ${detail.network}`);
                     }
                 });
             }
 
             if (results.failed > 0) {
-                console.log(`[sweep-bitcoin-deposits] ⚠️ Failed to sweep ${results.failed} deposits`);
+                btcSweepLogger.warn(`Failed to sweep ${results.failed} deposits`);
 
                 // Log failures
                 results.details.forEach(detail => {
                     if (detail.status === 'failed') {
-                        console.log(`  - ${detail.amount} ${detail.pair} on ${detail.network}: ${detail.error}`);
+                        btcSweepLogger.warn(`  - ${detail.amount} ${detail.pair} on ${detail.network}: ${detail.error}`);
                     }
                 });
             }
 
             if (results.swept === 0 && results.failed === 0) {
-                console.log('[sweep-bitcoin-deposits] No deposits to sweep');
+                btcSweepLogger.log('No deposits to sweep');
             }
 
             job.attrs.lastRun = new Date();
         } catch (error) {
-            console.error('[sweep-bitcoin-deposits] ❌ Error:', error);
+            btcSweepLogger.error(` Error: ${error}`);
             throw error;
         }
     });
 
     agenda.every('10 minutes', 'sweep-bitcoin-deposits');
-    console.log('=============== AGENDA TASK INITIALIZED ===============');
-    console.log('Task: sweep-bitcoin-deposits');
-    console.log('Interval: 10 minutes');
-    console.log('Description: Automatically sweep confirmed Bitcoin deposits to admin wallet');
-    console.log('NOTE: Requires bitcoinjs-lib implementation');
-    console.log('=======================================================\n');
+    btcSweepLogger.initialize({ frequency: '10 minutes' });
 
     // Run 2 minutes after startup
     setTimeout(() => {

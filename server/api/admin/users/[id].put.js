@@ -5,7 +5,7 @@ export default defineEventHandler(async (event) => {
 
     const validStatuses = Object.values(USER_AUTH_STATUSES)
 
-    const { status, attrs } = await readAndValidateBody(event, {
+    const { status, attrs, biasedPositive } = await readAndValidateBody(event, {
         customValidators: {
             status: status => status ? validStatuses.includes(status) : true,
             attrs: attrs => attrs ? typeof attrs == 'object' : true
@@ -24,9 +24,12 @@ export default defineEventHandler(async (event) => {
             }),
             ...(status && {
                 'auth.status': status
+            }),
+            ...(typeof biasedPositive === 'boolean' && {
+                'trading.biasedPositive': biasedPositive
             })
         }, {
-            select: 'auth.status attrs',
+            select: 'auth.status attrs trading.biasedPositive',
             returnDocument: 'after'
         });
 
@@ -39,6 +42,7 @@ export default defineEventHandler(async (event) => {
 
         return {
             status: updatedUser.auth.status,
+            biasedPositive: updatedUser.trading.biasedPositive,
             attrs: updatedUser.attrs,
         };
 

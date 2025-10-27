@@ -1,4 +1,3 @@
-import BigNumber from "~/lib/bignumber.config";
 import { ORDER_STATUSES } from "~/db/schemas/Order";
 
 const Pair = getModel("Pair")
@@ -46,6 +45,7 @@ export async function distributePnL(
             const proportion = calculateProportion(dist.amount, totalLocked);
             const pnlShare = multiply(pnlSmallest, proportion);
 
+
             if (isProfit) {
                 balance.available = add(balance.available, pnlShare);
                 balance.totalPnL = add(balance.totalPnL, pnlShare);
@@ -58,6 +58,7 @@ export async function distributePnL(
             await balance.save();
 
             totalDistributed = add(totalDistributed, pnlShare);
+
         } catch (error) {
             errors.push(`Failed to distribute PnL to balance ${dist.balanceId}: ${error.message}`);
         }

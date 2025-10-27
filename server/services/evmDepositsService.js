@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { CHAIN_TYPES, NETWORKS } from '../db/schemas/Network.js';
 import { DEPOSIT_STATUS } from '../db/schemas/Deposit.js';
+import { evmDepositScanLogger, evmSweepLogger } from './logService.js';
 
 const Pair = getModel('Pair');
 const Wallet = getModel('Wallet');
@@ -25,6 +26,8 @@ const MIN_BALANCE_THRESHOLDS = {
 // Minimum ETH required for ERC-20 sweeps (in ETH)
 const MIN_ETH_FOR_ERC20_SWEEP = '0.001';
 
+const logger = evmDepositScanLogger || console;
+
 /**
  * Get provider for network
  */
@@ -47,6 +50,10 @@ function isNetworkSupported(network) {
  * Get native token balance for an address
  */
 async function getNativeBalance(network, walletAddress) {
+    if (!ethers.isAddress(walletAddress)) {
+        throw new Error(`Invalid wallet address: ${walletAddress}`);
+    }
+
     const provider = getProvider(network);
     const balance = await provider.getBalance(walletAddress);
     return ethers.formatEther(balance);
@@ -56,6 +63,16 @@ async function getNativeBalance(network, walletAddress) {
  * Get ERC-20 token balance for an address
  */
 async function getTokenBalance(network, tokenAddress, walletAddress, decimals) {
+    if (!ethers.isAddress(tokenAddress)) {
+        throw new Error(`Invalid token address: ${tokenAddress}`);
+    }
+    if (!ethers.isAddress(walletAddress)) {
+        throw new Error(`Invalid wallet address: ${walletAddress}`);
+    }
+    if (!decimals || decimals < 0) {
+        throw new Error(`Invalid decimals: ${decimals}`);
+    }
+
     const provider = getProvider(network);
     const contract = new ethers.Contract(
         tokenAddress,
@@ -100,7 +117,13 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
 
     // Validate network is supported
     if (!isNetworkSupported(network)) {
-        console.warn(`[scanWalletForDeposits] Unsupported network: ${network}`);
+        logger.warn(` Unsupported network: ${network}`);
+        return deposits;
+    }
+
+    // Validate wallet address
+    if (!wallet.address || !ethers.isAddress(wallet.address)) {
+        logger.error(` Invalid wallet address for wallet ${wallet._id}`);
         return deposits;
     }
 
@@ -108,6 +131,12 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
         // Scan for each pair
         for (const pair of pairs) {
             try {
+                // Validate pair has required fields
+                if (!pair.symbol || !pair.decimals || pair.decimals < 0) {
+                    logger.error(` Invalid pair configuration for pair ${pair._id}`);
+                    continue;
+                }
+
                 let onchainBalance = '0';
 
                 // Get on-chain balance
@@ -186,11 +215,11 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
                     network,
                     amountSmallest: newDepositAmountSmallest,
                     status: DEPOSIT_STATUS.PENDING,
-                    createdAt: { $gte: new Date(Date.now() - 60000) } // Within last minute
+                    createdAt: { $gte: new Date(Date.now() - 120000) } // Within last 2 minutes
                 });
 
                 if (recentDuplicate) {
-                    console.log(`[scanWalletForDeposits] Skipping duplicate deposit for ${pair.symbol}`);
+                    logger.log(` Skipping duplicate deposit for ${pair.symbol}`);
                     continue;
                 }
 
@@ -208,20 +237,20 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
 
                 deposits.push(deposit);
 
-                console.log(`[scanWalletForDeposits] New deposit detected: ${newDepositAmount} ${pair.symbol} on ${network}`);
+                logger.log(` New deposit detected: ${newDepositAmount} ${pair.symbol} on ${network}`);
 
             } catch (pairError) {
-                console.error(`[scanWalletForDeposits] Error scanning pair ${pair.symbol}:`, pairError.message);
+                logger.error(` Error scanning pair ${pair.symbol}:`, pairError.message);
             }
         }
 
         // Log successful scans with no deposits for monitoring
         if (deposits.length === 0) {
-            console.log(`[scanWalletForDeposits] Scan completed for wallet ${wallet._id} on ${network} - no new deposits found`);
+            logger.log(` Scan completed for wallet ${wallet._id} on ${network} - no new deposits found`);
         }
 
     } catch (error) {
-        console.error(`[scanWalletForDeposits] Error scanning wallet ${wallet._id} on ${network}:`, error);
+        logger.error(` Error scanning wallet ${wallet._id} on ${network}:`, error);
     }
 
     return deposits;
@@ -233,9 +262,10 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
  */
 export async function scanAllEVMWalletsForDeposits() {
     try {
-        // Get all EVM wallets
+        // Get all active EVM wallets
         const wallets = await Wallet.find({
-            chainType: CHAIN_TYPES.EVM
+            chainType: CHAIN_TYPES.EVM,
+            isActive: true
         });
 
         const results = {
@@ -262,13 +292,26 @@ export async function scanAllEVMWalletsForDeposits() {
             }
         }
 
-        console.log(`[scanAllEVMWalletsForDeposits] Completed: ${results.scanned} scans, ${results.found} deposits found`);
+        logger.log(`Completed: ${results.scanned} scans, ${results.found} deposits found`);
 
         return results;
 
     } catch (error) {
-        console.error('[scanAllEVMWalletsForDeposits] Error:', error);
+        logger.error('Error:', error);
         return { scanned: 0, found: 0, deposits: [] };
+    }
+}
+
+/**
+ * Check if wallet has sufficient ETH for ERC-20 sweep
+ */
+async function hasEnoughEthForGas(network, walletAddress) {
+    try {
+        const ethBalance = await getNativeBalance(network, walletAddress);
+        return parseFloat(ethBalance) >= parseFloat(MIN_ETH_FOR_ERC20_SWEEP);
+    } catch (error) {
+        logger.error(`Error checking ETH balance for ${walletAddress}:`, error.message);
+        return false;
     }
 }
 
@@ -277,6 +320,7 @@ export async function scanAllEVMWalletsForDeposits() {
  * Takes deposits in PENDING status and moves funds to admin wallet
  */
 export async function sweepPendingDeposits() {
+    const sweepLogger = evmSweepLogger || console;
     try {
         // Get pending deposits ready to be swept
         const depositsToSweep = await Deposit.find({
@@ -293,16 +337,26 @@ export async function sweepPendingDeposits() {
         for (const deposit of depositsToSweep) {
             // Validate populated fields
             if (!deposit.wallet || !deposit.pair || !deposit.balance) {
-                console.error(`[sweepPendingDeposits] Invalid deposit ${deposit._id}: missing populated fields`);
+                sweepLogger.error(`Invalid deposit ${deposit._id}: missing populated fields`);
                 results.failed++;
                 continue;
             }
 
             // Validate amountSmallest exists
             if (!deposit.amountSmallest || compare(deposit.amountSmallest, '0') <= 0) {
-                console.error(`[sweepPendingDeposits] Invalid deposit ${deposit._id}: invalid amountSmallest`);
+                sweepLogger.error(`Invalid deposit ${deposit._id}: invalid amountSmallest`);
                 results.failed++;
                 continue;
+            }
+
+            // For ERC-20 tokens, check if wallet has enough ETH for gas
+            const isERC20 = deposit.pair.contractAddresses?.get?.(deposit.network);
+            if (isERC20) {
+                const hasEth = await hasEnoughEthForGas(deposit.network, deposit.wallet.address);
+                if (!hasEth) {
+                    sweepLogger.warn(`Wallet ${deposit.wallet._id} has insufficient ETH for gas on ${deposit.network}. Skipping for now.`);
+                    continue; // Skip but don't mark as failed - might get ETH later
+                }
             }
 
             try {
@@ -311,10 +365,12 @@ export async function sweepPendingDeposits() {
                     { _id: deposit._id, status: DEPOSIT_STATUS.PENDING },
                     { $set: { status: DEPOSIT_STATUS.PROCESSING } },
                     { new: true }
-                );
+                )
+                    .populate('wallet')
+                    .exec();
 
                 if (!updated) {
-                    console.log(`[sweepPendingDeposits] Deposit ${deposit._id} already being processed`);
+                    sweepLogger.log(`Deposit ${deposit._id} already being processed`);
                     continue;
                 }
 
@@ -344,16 +400,16 @@ export async function sweepPendingDeposits() {
                     status: 'failed',
                     error: error.message
                 });
-                console.error(`[sweepPendingDeposits] Failed to sweep deposit ${deposit._id}:`, error);
+                sweepLogger.error(`Failed to sweep deposit ${deposit._id}:`, error);
             }
         }
 
-        console.log(`[sweepPendingDeposits] Completed: ${results.swept} swept, ${results.failed} failed`);
+        sweepLogger.log(`Completed: ${results.swept} swept, ${results.failed} failed`);
 
         return results;
 
     } catch (error) {
-        console.error('[sweepPendingDeposits] Error:', error);
+        sweepLogger.error('Error:', error);
         return { swept: 0, failed: 0, details: [] };
     }
 }
@@ -384,16 +440,16 @@ export async function retryFailedDeposits() {
                 await deposit.save();
 
                 results.retried++;
-                console.log(`[retryFailedDeposits] Retrying deposit ${deposit._id} (attempt ${deposit.retryCount})`);
+                logger.log(`Retrying deposit ${deposit._id} (attempt ${deposit.retryCount})`);
             } catch (error) {
-                console.error(`[retryFailedDeposits] Failed to retry deposit ${deposit._id}:`, error);
+                logger.error(`Failed to retry deposit ${deposit._id}:`, error);
             }
         }
 
         return results;
 
     } catch (error) {
-        console.error('[retryFailedDeposits] Error:', error);
+        logger.error('Error:', error);
         return { retried: 0, succeeded: 0, failed: 0 };
     }
 }
@@ -403,6 +459,8 @@ export async function retryFailedDeposits() {
  * Now uses the agnostic evmTransfer function
  */
 async function sweepSingleDeposit(deposit) {
+    const sweepLogger = evmSweepLogger || console;
+
     const wallet = deposit.wallet;
     const pair = deposit.pair;
     const network = deposit.network;
@@ -410,6 +468,11 @@ async function sweepSingleDeposit(deposit) {
     // Validate master mnemonic
     if (!process.env.MASTER_MNEMONIC) {
         throw new Error('MASTER_MNEMONIC environment variable not set');
+    }
+
+    // Validate pair decimals
+    if (!pair.decimals || pair.decimals < 0) {
+        throw new Error(`Invalid pair decimals for ${pair.symbol}`);
     }
 
     // Get admin wallet by both chainType AND network
@@ -421,6 +484,11 @@ async function sweepSingleDeposit(deposit) {
 
     if (!adminWallet) {
         throw new Error(`No active admin wallet found for ${wallet.chainType} on ${network}`);
+    }
+
+    // Validate admin wallet address
+    if (!adminWallet.address || !ethers.isAddress(adminWallet.address)) {
+        throw new Error(`Invalid admin wallet address for ${network}`);
     }
 
     // Get provider and create signer
@@ -448,6 +516,10 @@ async function sweepSingleDeposit(deposit) {
     } else {
         // ERC-20 token transfer
         const tokenAddress = pair.contractAddresses.get(network);
+
+        if (!ethers.isAddress(tokenAddress)) {
+            throw new Error(`Invalid token contract address for ${pair.symbol} on ${network}`);
+        }
 
         transferResult = await evmTransfer({
             provider,
@@ -489,11 +561,11 @@ async function sweepSingleDeposit(deposit) {
         deposit.actualSweptAmountSmallest = transferResult.actualAmount;
         await deposit.save();
 
-        console.log(`[sweepSingleDeposit] Swept ${actualSweptAmountReadable} ${pair.symbol} to admin wallet. TX: ${transferResult.txHash}`);
+        sweepLogger.log(`Swept ${actualSweptAmountReadable} ${pair.symbol} to admin wallet. TX: ${transferResult.txHash}`);
 
     } catch (updateError) {
         // Transaction succeeded but accounting failed - critical error
-        console.error(`[sweepSingleDeposit] CRITICAL: Sweep succeeded but accounting failed for deposit ${deposit._id}. TX: ${transferResult.txHash}`, updateError);
+        sweepLogger.error(`CRITICAL: Sweep succeeded but accounting failed for deposit ${deposit._id}. TX: ${transferResult.txHash}`, updateError);
 
         // Still mark as swept with the tx hash so we don't try again
         deposit.status = DEPOSIT_STATUS.SWEPT;

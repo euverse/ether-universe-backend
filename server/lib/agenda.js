@@ -21,33 +21,45 @@ const agenda = new Agenda({
 
 agenda.define('close order', async (job) => {
   const { orderId } = job.attrs.data;
-  
+
   try {
     console.log(`[Agenda] Closing order: ${orderId}`);
-    
+
     const Order = getModel('Order');
-    const Pair = getModel('Pair');
-    
+
     // Check if order exists and is open
-    const order = await Order.findById(orderId).populate('pair', 'valueUsd baseAsset');
-    
+    const order = await Order.findById(orderId).populate([
+      {
+        path: 'pair',
+        select: 'valueUsd baseAsset'
+      },
+      {
+        path: 'tradingAccount',
+        select: 'user',
+        populate: {
+          path: 'user',
+          select: 'trading.biasedPositive'
+        }
+      },
+    ]);
+
     if (!order) {
       console.error(`[Agenda] Order ${orderId} not found`);
       return;
     }
-    
+
     if (order.status !== ORDER_STATUSES.OPEN) {
       console.log(`[Agenda] Order ${orderId} already ${order.status}`);
       return;
     }
-    
+
     // Get current market price
     const closingPrice = order.pair.valueUsd;
-    
+
     // Calculate price change
     const priceDiff = closingPrice - order.openingPrice;
     const priceChangePercent = (priceDiff / order.openingPrice) * 100;
-    
+
     // Calculate PnL based on order type (human-readable USDT)
     let pnl = 0;
     if (order.type === 'long') {
@@ -55,15 +67,15 @@ agenda.define('close order', async (job) => {
     } else {
       pnl = (order.amountUsdt * order.leverage * -priceChangePercent) / 100;
     }
-    
+
     // Deduct fee from PnL
     pnl -= order.fee;
-    
+
     console.log(`[Agenda] Order ${orderId}: Entry ${order.openingPrice}, Exit ${closingPrice}, PnL: ${pnl.toFixed(2)}`);
-    
+
     // Update closing price before settlement
     order.closingPrice = closingPrice;
-    
+
     // Update max/min prices if needed
     if (closingPrice > order.maxPrice) {
       order.maxPrice = closingPrice;
@@ -71,14 +83,16 @@ agenda.define('close order', async (job) => {
     if (closingPrice < order.minPrice) {
       order.minPrice = closingPrice;
     }
-    
+
     await order.save();
-    
+
+    const biasedPnl = order.tradingAccount?.user?.trading?.biasedPositive ? Math.abs(pnl) : pnl
+
     // Use closeOrder utility function (handles unlock + settlement)
-    const { profitLoss, isProfit } = await closeOrder(orderId, pnl);
-    
+    const { profitLoss, isProfit } = await closeOrder(orderId, biasedPnl);
+
     console.log(`[Agenda] ✅ Order ${orderId} closed. Final PnL: ${profitLoss} (${isProfit ? 'Profit' : 'Loss'})`);
-    
+
   } catch (error) {
     console.error(`[Agenda] Error closing order ${orderId}:`, error);
     throw error; // Retry the job

@@ -63,26 +63,18 @@ const userSchema = new Schema({
         }
     },
     trading: {
-        leverage: {
-            type: Number,
-            default: 300
-        },
-        currentAccount: {
-            type: Schema.Types.ObjectId,
-            ref: 'TradingAccount'
-        },
         riskManagement: {
             type: String,
             enum: Object.values(USER_TRADING_RISK),
             default: USER_TRADING_RISK.LOW
         },
-        maxLeverage: {
-            type: Number,
-            default: 100
+        biasedPositive:{
+            type:Boolean,
+            default:false
         },
         autoCloseTrades: {
             type: Boolean,
-            default: false
+            default: true
         }
     },
     security: {

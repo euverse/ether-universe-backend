@@ -1,6 +1,8 @@
+import { priceUpdateLogger } from "../services/logService";
 
 const Pair = getModel('Pair');
 const BINANCE_24HR_TICKER = useRuntimeConfig().BINANCE_TICKER_URL;
+
 
 async function fetchBinancePrices() {
   try {
@@ -42,14 +44,14 @@ async function fetchBinancePrices() {
 
     return [...usdtPairs, ...stablecoinPairs];
   } catch (error) {
-    console.error('Error fetching Binance prices:', error.message);
+    priceUpdateLogger.error('Error fetching Binance prices:', error.message);
     throw error;
   }
 }
 
 async function updateCryptoPrices() {
   try {
-    console.log('=============== PRICE UPDATE START ===============');
+    priceUpdateLogger.start()
 
     // Fetch both USDT and USD pairs
     const pairs = await Pair.find({
@@ -57,11 +59,11 @@ async function updateCryptoPrices() {
     }).select('_id baseAsset quoteAsset category');
 
     if (pairs.length === 0) {
-      console.log('No USDT or USD pairs found in database');
+      priceUpdateLogger.warn('No USDT or USD pairs found in database');
       return;
     }
 
-    console.log(`Found ${pairs.length} pairs in database`);
+    priceUpdateLogger.log(`Found ${pairs.length} pairs in database`);
 
     const binanceData = await fetchBinancePrices();
 
@@ -78,9 +80,9 @@ async function updateCryptoPrices() {
         .map(item => [item.baseAsset, item])
     );
 
-    console.log(`Fetched ${binanceData.length} pairs from Binance`);
-    console.log(`- ${binanceMapUSDT.size} USDT pairs`);
-    console.log(`- ${binanceMapUSD.size} USD pairs`);
+    priceUpdateLogger.log(`Fetched ${binanceData.length} pairs from Binance`);
+    priceUpdateLogger.log(`${binanceMapUSDT.size} USDT pairs`);
+    priceUpdateLogger.log(`${binanceMapUSD.size} USD pairs`);
 
     const bulkOps = [];
     let updatedCount = 0;
@@ -114,25 +116,24 @@ async function updateCryptoPrices() {
         updatedCount++;
       } else {
         notFoundCount++;
-        console.log(`⚠️  No Binance data for ${pair.baseAsset}/${pair.quoteAsset}`);
+        priceUpdateLogger.warn(`No Binance data for ${pair.baseAsset}/${pair.quoteAsset}`);
       }
     }
 
     if (bulkOps.length > 0) {
       const result = await Pair.bulkWrite(bulkOps, { ordered: false });
-      console.log(`✓ Updated ${result.modifiedCount} out of ${pairs.length} pairs`);
+      priceUpdateLogger.success(`Updated ${result.modifiedCount} out of ${pairs.length} pairs`);
       if (notFoundCount > 0) {
-        console.log(`⚠️  ${notFoundCount} pairs not found on Binance`);
+        priceUpdateLogger.warn(`${notFoundCount} pairs not found on Binance`);
       }
-      console.log('=============== PRICE UPDATE END ===============\n');
       return result;
     } else {
-      console.log('No matching pairs found on Binance');
-      console.log('=============== PRICE UPDATE END ===============\n');
+      priceUpdateLogger.warn('No matching pairs found on Binance');
     }
   } catch (error) {
-    console.error('Error updating prices:', error.message);
-    console.log('=============== PRICE UPDATE END ===============\n');
+    priceUpdateLogger.error('Error updating prices:', error.message);
+  } finally {
+    priceUpdateLogger.complete();
   }
 }
 
@@ -143,10 +144,7 @@ export function initializePriceUpdateTask(agenda) {
 
   agenda.every('10 seconds', 'update-crypto-prices');
 
-  console.log('=============== AGENDA TASK INITIALIZED ===============');
-  console.log('Task: update-crypto-prices');
-  console.log('Interval: 30 seconds');
-  console.log('=======================================================\n');
+  priceUpdateLogger.initialize({ frequency: '10 seconds' });
 
   agenda.now('update-crypto-prices');
 }

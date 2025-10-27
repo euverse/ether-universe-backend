@@ -20,6 +20,7 @@ import blackListedIp from "../schemas/BlackListedIp.js";
 import priceDataSchema from "../schemas/PriceData.js";
 import userWithdrawalSchema from "../schemas/UserWithdrawal.js";
 import adminWithdrawalSchema from "../schemas/AdminWithdrawal.js";
+import logSchema from "../schemas/Log.js";
 
 const MODELS_REGISTER = {
     AssetAllocation: model('AssetAllocation', assetAllocationSchema, 'assets allocations'),
@@ -42,7 +43,8 @@ const MODELS_REGISTER = {
     Order: model('Order', orderSchema),
     Notification: model('Notification', notificationSchema),
     BlackListedIp: model('BlackListedIp', blackListedIp, 'blacklisted ips'),
-    PriceData: model('PriceData', priceDataSchema, 'price data')
+    PriceData: model('PriceData', priceDataSchema, 'price data'),
+    Log: model('Log', logSchema)
 }
 
 export const getModel = (key) => {

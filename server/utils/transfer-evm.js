@@ -62,7 +62,7 @@ export async function evmTransfer({
         const feeData = await provider.getFeeData();
         const gasLimitNative = gasLimit || 21000n;
 
-        // Calculate gas cost with buffer
+        // Calculate gas cost with buffer (using BigInt arithmetic to avoid precision loss)
         let gasCost;
         if (feeData.maxFeePerGas) {
             // EIP-1559 transaction
@@ -72,8 +72,8 @@ export async function evmTransfer({
             gasCost = feeData.gasPrice * gasLimitNative;
         }
 
-        // Apply buffer
-        gasCost = BigInt(Math.ceil(Number(gasCost) * GAS_BUFFER_MULTIPLIER));
+        // Apply buffer using BigInt arithmetic: multiply by 120, divide by 100
+        gasCost = (gasCost * BigInt(120)) / BigInt(100);
 
         let amountToSend;
 
@@ -142,6 +142,10 @@ export async function evmTransfer({
             throw new Error(`Invalid token address: ${tokenAddress}`);
         }
 
+        if (!decimals || decimals < 0) {
+            throw new Error(`Invalid token decimals: ${decimals}`);
+        }
+
         // Check wallet has enough ETH for gas
         const ethBalance = await provider.getBalance(fromAddress);
         const feeData = await provider.getFeeData();
@@ -156,7 +160,8 @@ export async function evmTransfer({
             estimatedGasCost = feeData.gasPrice * estimatedGasLimit;
         }
 
-        estimatedGasCost = BigInt(Math.ceil(Number(estimatedGasCost) * GAS_BUFFER_MULTIPLIER));
+        // Apply buffer using BigInt arithmetic
+        estimatedGasCost = (estimatedGasCost * BigInt(120)) / BigInt(100);
 
         if (ethBalance < estimatedGasCost) {
             throw new Error(
@@ -202,8 +207,24 @@ export async function evmTransfer({
 
 /**
  * Helper: Create signer from mnemonic and derivation path
+ * 
+ * @param {string} mnemonic - BIP39 mnemonic phrase
+ * @param {string} derivationPath - HD wallet derivation path (e.g., "m/44'/60'/0'/0/0")
+ * @param {ethers.Provider} provider - Ethers provider instance
+ * @returns {ethers.Wallet} Connected wallet signer
+ * @throws {Error} If mnemonic is invalid or derivation fails
  */
 export function createSignerFromMnemonic(mnemonic, derivationPath, provider) {
+    if (!mnemonic) {
+        throw new Error('Mnemonic is required');
+    }
+    if (!derivationPath) {
+        throw new Error('Derivation path is required');
+    }
+    if (!provider) {
+        throw new Error('Provider is required');
+    }
+
     const mnemonicObj = ethers.Mnemonic.fromPhrase(mnemonic);
     const hdNode = ethers.HDNodeWallet.fromMnemonic(mnemonicObj, "m");
     return hdNode.derivePath(derivationPath).connect(provider);
@@ -211,10 +232,22 @@ export function createSignerFromMnemonic(mnemonic, derivationPath, provider) {
 
 /**
  * Helper: Get provider for network
+ * 
+ * @param {string} rpcUrl - RPC endpoint URL
+ * @returns {ethers.JsonRpcProvider} Provider instance
+ * @throws {Error} If RPC URL is invalid
  */
 export function createProvider(rpcUrl) {
     if (!rpcUrl) {
         throw new Error('RPC URL is required');
     }
+
+    // Validate URL format
+    try {
+        new URL(rpcUrl);
+    } catch (error) {
+        throw new Error(`Invalid RPC URL format: ${rpcUrl}`);
+    }
+
     return new ethers.JsonRpcProvider(rpcUrl);
 }
