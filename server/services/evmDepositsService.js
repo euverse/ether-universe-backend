@@ -2,6 +2,7 @@ import { ethers } from 'ethers';
 import { CHAIN_TYPES, NETWORKS } from '../db/schemas/Network.js';
 import { DEPOSIT_STATUS } from '../db/schemas/Deposit.js';
 import { evmDepositScanLogger, evmSweepLogger } from './logService.js';
+import { validateDecimals } from '../utils/balances.js';
 
 const Pair = getModel('Pair');
 const Wallet = getModel('Wallet');
@@ -509,7 +510,7 @@ export async function sweepPendingDeposits() {
                         { $set: { status: DEPOSIT_STATUS.PROCESSING } },
                         { new: true }
                     )
-                        .populate('wallet')
+                        .populate('wallet pair')
                         .exec();
 
                     if (!updated) {
@@ -615,10 +616,7 @@ async function sweepSingleDeposit(deposit) {
         throw new Error('MASTER_MNEMONIC environment variable not set');
     }
 
-    // Validate pair decimals
-    if (!pair.decimals || pair.decimals < 0) {
-        throw new Error(`Invalid pair decimals for ${pair.symbol}`);
-    }
+    validateDecimals(pair.decimals)
 
     // Get admin wallet by both chainType AND network
     const adminWallet = await AdminWallet.findOne({
