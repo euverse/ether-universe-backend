@@ -326,7 +326,7 @@ async function hasEnoughEthForGas(network, walletAddress) {
 async function fundWalletWithGas(deposit, network, userWalletAddress) {
     const sweepLogger = evmSweepLogger || console;
 
-    sweepLogger.log(JSON.stringify({ deposit, network, userWalletAddress }))
+    // sweepLogger.log(JSON.stringify({ deposit, network, userWalletAddress }))
 
     // Validate master mnemonic
     if (!process.env.MASTER_MNEMONIC) {
@@ -336,7 +336,6 @@ async function fundWalletWithGas(deposit, network, userWalletAddress) {
     // Get admin wallet for this network
     const adminWallet = await AdminWallet.findOne({
         chainType: CHAIN_TYPES.EVM,
-        network,
         isActive: true
     }).select('+derivationPath');
 
@@ -634,7 +633,6 @@ async function sweepSingleDeposit(deposit) {
     // Get admin wallet by both chainType AND network
     const adminWallet = await AdminWallet.findOne({
         chainType: wallet.chainType,
-        network: network,
         isActive: true
     }).select('+derivationPath');
 
