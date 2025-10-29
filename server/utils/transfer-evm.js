@@ -7,7 +7,7 @@ import { ethers } from 'ethers';
  * @param {BigInt} [gasLimit=65000n] - Optional custom gas limit
  * @returns {Promise<BigInt>} Estimated gas cost in wei (with 20% buffer)
  */
-export async function calculateGasForERC20Transfer(provider, gasLimit = 65000n) {
+export async function calculateGasForERC20Transfer(provider, gasLimit = BigInt(65000)) {
     const feeData = await provider.getFeeData();
 
     let gasCost;
@@ -63,7 +63,7 @@ export async function evmTransfer({
     }
 
     const amountBigInt = BigInt(amount);
-    if (amountBigInt <= 0n) {
+    if (amountBigInt <= BigInt(0)) {
         throw new Error(`Invalid amount: ${amount}`);
     }
 
@@ -76,7 +76,7 @@ export async function evmTransfer({
 
         // Get fee data
         const feeData = await provider.getFeeData();
-        const gasLimitNative = gasLimit || 21000n;
+        const gasLimitNative = gasLimit || BigInt(21000);
 
         // Calculate gas cost with buffer (using BigInt arithmetic to avoid precision loss)
         let gasCost;
@@ -104,7 +104,7 @@ export async function evmTransfer({
 
             amountToSend = amountBigInt - gasCost;
 
-            if (amountToSend <= 0n) {
+            if (amountToSend <= BigInt(0)) {
                 throw new Error(
                     `Insufficient balance to cover gas fees. Balance: ${ethers.formatEther(amountBigInt)} ETH, ` +
                     `Gas cost: ${ethers.formatEther(gasCost)} ETH`
@@ -164,7 +164,7 @@ export async function evmTransfer({
 
         // Check wallet has enough ETH for gas
         const ethBalance = await provider.getBalance(fromAddress);
-        const estimatedGasLimit = gasLimit || 65000n;
+        const estimatedGasLimit = gasLimit || BigInt(65000);
         const estimatedGasCost = await calculateGasForERC20Transfer(provider, estimatedGasLimit);
 
         if (ethBalance < estimatedGasCost) {

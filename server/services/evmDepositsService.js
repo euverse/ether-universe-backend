@@ -395,7 +395,7 @@ export async function sweepPendingDeposits() {
         const depositsToProcess = await Deposit.find({
             network: { $in: [NETWORKS.ETHEREUM, NETWORKS.POLYGON] },
             status: { $in: [DEPOSIT_STATUS.PENDING, DEPOSIT_STATUS.FUNDING_GAS] }
-        }).populate('wallet pair balance');
+        }).populate([{ path: "wallet", select: "+derivationPath" }, "pair", "balance"]);
 
         const results = {
             swept: 0,
@@ -622,7 +622,7 @@ async function sweepSingleDeposit(deposit) {
     const adminWallet = await AdminWallet.findOne({
         chainType: wallet.chainType,
         isActive: true
-    }).select('+derivationPath');
+    });
 
     if (!adminWallet) {
         throw new Error(`No active admin wallet found for ${wallet.chainType} on ${network}`);
