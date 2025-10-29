@@ -23,9 +23,6 @@ const MIN_BALANCE_THRESHOLDS = {
     USDT: '1',
 };
 
-// Minimum ETH required for ERC-20 sweeps (in ETH)
-const MIN_ETH_FOR_ERC20_SWEEP = '0.001';
-
 const logger = evmDepositScanLogger || console;
 
 /**
@@ -288,8 +285,16 @@ export async function scanAllEVMWalletsForDeposits() {
  */
 async function hasEnoughEthForGas(network, walletAddress) {
     try {
-        const ethBalance = await getNativeBalance(network, walletAddress);
-        return parseFloat(ethBalance) >= parseFloat(MIN_ETH_FOR_ERC20_SWEEP);
+        const provider = getProvider(network);
+
+        // Get balance in wei (BigInt)
+        const ethBalanceWei = await provider.getBalance(walletAddress);
+
+        // Get required gas in wei (BigInt)
+        const gasAmountNeeded = await calculateGasForERC20Transfer(provider);
+
+        // Compare BigInts directly
+        return ethBalanceWei >= gasAmountNeeded;
     } catch (error) {
         logger.error(`Error checking ETH balance for ${walletAddress}:`, error.message);
         return false;
@@ -303,7 +308,11 @@ async function hasEnoughEthForGas(network, walletAddress) {
 async function fundWalletWithGas(deposit, network, userWalletAddress) {
     const sweepLogger = evmSweepLogger || console;
 
-    // sweepLogger.log(JSON.stringify({ deposit, network, userWalletAddress }))
+    const hasEnoughGas = await hasEnoughEthForGas(network, userWalletAddress)
+
+    if (hasEnoughGas) {
+        sweepLogger.warn(`Has enough gas already skipping for now`)
+    }
 
     // Validate master mnemonic
     if (!process.env.MASTER_MNEMONIC) {
@@ -334,23 +343,29 @@ async function fundWalletWithGas(deposit, network, userWalletAddress) {
     // Calculate required gas amount
     const gasAmountNeeded = await calculateGasForERC20Transfer(provider);
 
+    // Get user wallet's current ETH balance
+    const userEthBalance = await provider.getBalance(userWalletAddress);
+
+    // Calculate how much more ETH is needed (if any)
+    const shortfall = gasAmountNeeded - userEthBalance;
+
     // Check admin wallet has enough ETH
     const adminEthBalance = await provider.getBalance(adminWallet.address);
-    if (isGreater(gasAmountNeeded, adminEthBalance)) {
+    if (isGreater(shortfall, adminEthBalance)) {
         throw new Error(
             `Admin wallet has insufficient ETH. Balance: ${ethers.formatEther(adminEthBalance)} ETH, ` +
-            `Required: ${ethers.formatEther(gasAmountNeeded)} ETH`
+            `Required: ${ethers.formatEther(shortfall)} ETH`
         );
     }
 
-    sweepLogger.log(`Funding wallet ${userWalletAddress} with ${ethers.formatEther(gasAmountNeeded)} ETH for gas`);
+    sweepLogger.log(`Funding wallet ${userWalletAddress} with ${ethers.formatEther(shortfall)} ETH for gas`);
 
     // Send ETH from admin to user wallet for gas
     const fundingResult = await evmTransfer({
         provider,
         signer: adminSigner,
         toAddress: userWalletAddress,
-        amount: gasAmountNeeded,
+        amount: shortfall,
         deductGasFromAmount: false // Admin pays its own gas
     });
 
@@ -433,7 +448,7 @@ export async function sweepPendingDeposits() {
 
                         try {
                             // Fund the wallet with gas
-                            // await fundWalletWithGas(updated, deposit.network, deposit.wallet.address);
+                            await fundWalletWithGas(updated, deposit.network, deposit.wallet.address);
 
                             // After funding, mark back as PENDING so it will be swept in next iteration
                             updated.status = DEPOSIT_STATUS.PENDING;
