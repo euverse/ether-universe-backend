@@ -433,7 +433,7 @@ export async function sweepPendingDeposits() {
 
                         try {
                             // Fund the wallet with gas
-                            await fundWalletWithGas(updated, deposit.network, deposit.wallet.address);
+                            // await fundWalletWithGas(updated, deposit.network, deposit.wallet.address);
 
                             // After funding, mark back as PENDING so it will be swept in next iteration
                             updated.status = DEPOSIT_STATUS.PENDING;
