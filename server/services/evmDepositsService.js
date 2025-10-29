@@ -395,7 +395,11 @@ export async function sweepPendingDeposits() {
         const depositsToProcess = await Deposit.find({
             network: { $in: [NETWORKS.ETHEREUM, NETWORKS.POLYGON] },
             status: { $in: [DEPOSIT_STATUS.PENDING, DEPOSIT_STATUS.FUNDING_GAS] }
-        }).populate([{ path: "wallet", select: "+derivationPath" }, "pair", "balance"]);
+        }).populate([
+            { path: "wallet", select: "+derivationPath" },
+            { path: "pair" },
+            { path: "balance" }
+        ]);
 
         const results = {
             swept: 0,
@@ -606,6 +610,8 @@ export async function retryFailedDeposits() {
  */
 async function sweepSingleDeposit(deposit) {
     const sweepLogger = evmSweepLogger || console;
+
+    sweepLogger.log(JSON.stringify(deposit))
 
     const wallet = deposit.wallet;
     const pair = deposit.pair;
