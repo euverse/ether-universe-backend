@@ -1,7 +1,3 @@
-
-// ============================================
-// User Wallet Schema
-// ============================================
 import { Schema } from "mongoose";
 import { CHAIN_TYPES } from "./Network";
 
@@ -24,7 +20,7 @@ const walletSchema = new Schema({
   },
   derivationPath: {
     type: String,
-    select: false
+    // select: false
   }
 }, {
   timestamps: true
