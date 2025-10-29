@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
 
   // Check USDT balance (returns human-readable values)
   const usdtBalance = await getTradingAccountUSDTBalance(tradingAccount._id);
-  const totalAvailableUsdt = parseFloat(usdtBalance.totals.available).toFixed(2);
+  const totalAvailableUsdt = parseFloat(usdtBalance.totals.available);
 
   // Calculate fee (0.5%)
   const fee = amount * 0.005;
@@ -89,6 +89,7 @@ export default defineEventHandler(async (event) => {
       createdAt: order.openedAt
     };
   } catch (error) {
+    console.error(error)
     throw createError({
       statusCode: 500,
       message: `Failed to create order: ${error.message}`

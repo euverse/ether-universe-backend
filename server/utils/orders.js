@@ -288,7 +288,6 @@ export async function settleOrder(
  */
 export async function placeOrder(
     tradingAccountId,
-    userId,
     pairId,
     orderType,
     amountUsdt, // human-readable
@@ -300,7 +299,7 @@ export async function placeOrder(
     // Lock balance for this order (amount + fee) - prioritizes allocations first
     const totalCost = parseFloat(amountUsdt) + parseFloat(fee);
     const locked = await lockUSDT(
-        { tradingAccountId, userId },
+        { tradingAccountId },
         totalCost.toString()
     );
 

@@ -276,8 +276,8 @@ export async function addPnL(
   if (!pair) {
     throw new Error(`Pair ${baseAsset} not found`);
   }
-  validateDecimals(pair.decimals);
 
+  validateDecimals(pair.decimals);
   const amountSmallest = toSmallestUnit(absAmount.toString(), pair.decimals);
 
   const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();
@@ -298,7 +298,12 @@ export async function addPnL(
     balance.available = add(balance.available, amountSmallest);
     balance.totalPnL = add(balance.totalPnL, amountSmallest);
   } else {
-    balance.available = subtract(balance.available, amountSmallest);
+    // For losses, drain to 0 if insufficient balance (negative balance protection)
+    if (isGreaterOrEqual(amountSmallest, balance.available)) {
+      balance.available = '0';
+    } else {
+      balance.available = subtract(balance.available, amountSmallest);
+    }
     balance.totalPnL = subtract(balance.totalPnL, amountSmallest);
   }
 
