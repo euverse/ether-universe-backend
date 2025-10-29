@@ -46,13 +46,17 @@ function isNetworkSupported(network) {
     return Object.keys(RPC_ENDPOINTS).includes(network);
 }
 
+function validateEVMAddress(walletAddress, type = "wallet") {
+    if (!ethers.isAddress(walletAddress)) {
+        throw new Error(`Invalid ${type} address: ${walletAddress}`);
+    }
+}
+
 /**
  * Get native token balance for an address
  */
 async function getNativeBalance(network, walletAddress) {
-    if (!ethers.isAddress(walletAddress)) {
-        throw new Error(`Invalid wallet address: ${walletAddress}`);
-    }
+    validateEVMAddress(walletAddress)
 
     const provider = getProvider(network);
     const balance = await provider.getBalance(walletAddress);
@@ -63,15 +67,9 @@ async function getNativeBalance(network, walletAddress) {
  * Get ERC-20 token balance for an address
  */
 async function getTokenBalance(network, tokenAddress, walletAddress, decimals) {
-    if (!ethers.isAddress(tokenAddress)) {
-        throw new Error(`Invalid token address: ${tokenAddress}`);
-    }
-    if (!ethers.isAddress(walletAddress)) {
-        throw new Error(`Invalid wallet address: ${walletAddress}`);
-    }
-    if (!decimals || decimals < 0) {
-        throw new Error(`Invalid decimals: ${decimals}`);
-    }
+    validateEVMAddress(tokenAddress, "token")
+    validateEVMAddress(walletAddress)
+    validateDecimals(decimals)
 
     const provider = getProvider(network);
     const contract = new ethers.Contract(
@@ -121,9 +119,11 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
         return deposits;
     }
 
-    // Validate wallet address
-    if (!wallet.address || !ethers.isAddress(wallet.address)) {
-        logger.error(` Invalid wallet address for wallet ${wallet._id}`);
+
+    try {
+        validateEVMAddress(wallet?.address)
+    } catch (error) {
+        logger.error(`Invalid wallet address for wallet ${wallet._id}`);
         return deposits;
     }
 
@@ -139,15 +139,17 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
 
                 let onchainBalance = '0';
 
+
+                const tokenAddress = pair.contractAddresses?.get?.(network);
+
                 // Get on-chain balance
-                if (!pair.contractAddresses?.get?.(network)) {
+                if (!tokenAddress) {
                     // Native token (ETH)
-                    if (pair.symbol === 'ETH') {
+                    if (pair.baseAsset === 'ETH') {
                         onchainBalance = await getNativeBalance(network, wallet.address);
                     }
                 } else {
                     // ERC-20 token
-                    const tokenAddress = pair.contractAddresses.get(network);
                     onchainBalance = await getTokenBalance(
                         network,
                         tokenAddress,
@@ -168,15 +170,7 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
                         pair: pair._id,
                         network
                     },
-                    {
-                        $setOnInsert: {
-                            initial: '0',
-                            available: '0',
-                            locked: '0',
-                            totalDeposited: '0',
-                            totalAllocated: '0'
-                        }
-                    },
+                    {},
                     {
                         upsert: true,
                         new: true
@@ -208,21 +202,6 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
                 // Convert to human-readable
                 const newDepositAmount = toReadableUnit(newDepositAmountSmallest, pair.decimals);
 
-                // Simple duplicate prevention - check if deposit with same amount was recently created
-                const recentDuplicate = await Deposit.findOne({
-                    wallet: wallet._id,
-                    pair: pair._id,
-                    network,
-                    amountSmallest: newDepositAmountSmallest,
-                    status: DEPOSIT_STATUS.PENDING,
-                    createdAt: { $gte: new Date(Date.now() - 120000) } // Within last 2 minutes
-                });
-
-                if (recentDuplicate) {
-                    logger.log(` Skipping duplicate deposit for ${pair.symbol}`);
-                    continue;
-                }
-
                 // Create deposit record as PENDING (ready to be swept)
                 const deposit = await Deposit.create({
                     tradingAccount: wallet.tradingAccount,
@@ -241,8 +220,7 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
 
             } catch (pairError) {
                 logger.error(` Error scanning pair ${pair.symbol}: ${pairError.message}`);
-            }
-            finally {
+            } finally {
                 await sleep(200)
             }
         }
@@ -264,17 +242,17 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
  * Runs periodically (every 2-3 minutes)
  */
 export async function scanAllEVMWalletsForDeposits() {
+    const results = {
+        scanned: 0,
+        found: 0,
+        deposits: []
+    };
+
     try {
         // Get all active EVM wallets
         const wallets = await Wallet.find({
             chainType: CHAIN_TYPES.EVM,
         });
-
-        const results = {
-            scanned: 0,
-            found: 0,
-            deposits: []
-        };
 
         // Get all active EVM pairs
         const pairs = await Pair.find({
@@ -298,11 +276,10 @@ export async function scanAllEVMWalletsForDeposits() {
 
         logger.log(`Completed: ${results.scanned} scans, ${results.found} deposits found`);
 
-        return results;
-
     } catch (error) {
         logger.error(`Error ${error.message}`);
-        return { scanned: 0, found: 0, deposits: [] };
+    } finally {
+        return results;
     }
 }
 
@@ -343,10 +320,8 @@ async function fundWalletWithGas(deposit, network, userWalletAddress) {
         throw new Error(`No active admin wallet found for EVM on ${network}`);
     }
 
-    // Validate admin wallet address
-    if (!adminWallet.address || !ethers.isAddress(adminWallet.address)) {
-        throw new Error(`Invalid admin wallet address for ${network}`);
-    }
+
+    validateEVMAddress(adminWallet?.address, "admin wallet")
 
     // Get provider and create admin signer
     const provider = getProvider(network);
@@ -361,7 +336,7 @@ async function fundWalletWithGas(deposit, network, userWalletAddress) {
 
     // Check admin wallet has enough ETH
     const adminEthBalance = await provider.getBalance(adminWallet.address);
-    if (adminEthBalance < BigInt(gasAmountNeeded)) {
+    if (isGreater(gasAmountNeeded, adminEthBalance)) {
         throw new Error(
             `Admin wallet has insufficient ETH. Balance: ${ethers.formatEther(adminEthBalance)} ETH, ` +
             `Required: ${ethers.formatEther(gasAmountNeeded)} ETH`
@@ -641,9 +616,7 @@ async function sweepSingleDeposit(deposit) {
     }
 
     // Validate admin wallet address
-    if (!adminWallet.address || !ethers.isAddress(adminWallet.address)) {
-        throw new Error(`Invalid admin wallet address for ${network}`);
-    }
+    validateEVMAddress(adminWallet?.address, "admin wallet")
 
     // Get provider and create signer
     const provider = getProvider(network);

@@ -1,5 +1,25 @@
 import { ethers } from 'ethers';
 
+/**
+ * Calculate estimated gas cost for an ERC-20 token transfer
+ * 
+ * @param {ethers.Provider} provider - Ethers provider instance
+ * @param {BigInt} [gasLimit=65000n] - Optional custom gas limit
+ * @returns {Promise<BigInt>} Estimated gas cost in wei (with 20% buffer)
+ */
+export async function calculateGasForERC20Transfer(provider, gasLimit = 65000n) {
+    const feeData = await provider.getFeeData();
+
+    let gasCost;
+    if (feeData.maxFeePerGas) {
+        gasCost = feeData.maxFeePerGas * gasLimit;
+    } else {
+        gasCost = feeData.gasPrice * gasLimit;
+    }
+
+    // Apply 20% buffer
+    return (gasCost * BigInt(120)) / BigInt(100);
+}
 
 /**
  * Agnostic EVM transfer function
@@ -144,20 +164,8 @@ export async function evmTransfer({
 
         // Check wallet has enough ETH for gas
         const ethBalance = await provider.getBalance(fromAddress);
-        const feeData = await provider.getFeeData();
-
-        // Estimate gas for ERC-20 transfer (typically ~65000)
         const estimatedGasLimit = gasLimit || 65000n;
-
-        let estimatedGasCost;
-        if (feeData.maxFeePerGas) {
-            estimatedGasCost = feeData.maxFeePerGas * estimatedGasLimit;
-        } else {
-            estimatedGasCost = feeData.gasPrice * estimatedGasLimit;
-        }
-
-        // Apply buffer using BigInt arithmetic
-        estimatedGasCost = (estimatedGasCost * BigInt(120)) / BigInt(100);
+        const estimatedGasCost = await calculateGasForERC20Transfer(provider, estimatedGasLimit);
 
         if (ethBalance < estimatedGasCost) {
             throw new Error(
