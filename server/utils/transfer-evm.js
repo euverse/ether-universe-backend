@@ -1,9 +1,5 @@
 import { ethers } from 'ethers';
 
-/**
- * Gas buffer multiplier for native token transfers (20% buffer)
- */
-const GAS_BUFFER_MULTIPLIER = 1.2;
 
 /**
  * Agnostic EVM transfer function

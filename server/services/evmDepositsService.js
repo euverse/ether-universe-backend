@@ -242,6 +242,9 @@ export async function scanWalletForDeposits(wallet, network, pairs) {
             } catch (pairError) {
                 logger.error(` Error scanning pair ${pair.symbol}: ${pairError.message}`);
             }
+            finally {
+                await sleep(200)
+            }
         }
 
         // Log successful scans with no deposits for monitoring
@@ -289,6 +292,8 @@ export async function scanAllEVMWalletsForDeposits() {
                 results.deposits.push(...deposits);
                 results.scanned++;
             }
+
+            await sleep(200)
         }
 
         logger.log(`Completed: ${results.scanned} scans, ${results.found} deposits found`);
@@ -320,8 +325,8 @@ async function hasEnoughEthForGas(network, walletAddress) {
  */
 async function fundWalletWithGas(deposit, network, userWalletAddress) {
     const sweepLogger = evmSweepLogger || console;
-    
-    sweepLogger.log({deposit, network, userWalletAddress})
+
+    sweepLogger.log(JSON.stringify({ deposit, network, userWalletAddress }))
 
     // Validate master mnemonic
     if (!process.env.MASTER_MNEMONIC) {
@@ -332,7 +337,7 @@ async function fundWalletWithGas(deposit, network, userWalletAddress) {
     const adminWallet = await AdminWallet.findOne({
         chainType: CHAIN_TYPES.EVM,
         network,
-        isActive:true
+        isActive: true
     }).select('+derivationPath');
 
     if (!adminWallet) {
