@@ -11,7 +11,7 @@ export default defineEventHandler(async event => {
       let balanceUsdt = "0.00";
 
       try {
-        const usdtBalance = await getTotalBalanceForPair(account._id, 'USDT');
+        const usdtBalance = await getTradingAccountUSDTBalance(account._id);
         balanceUsdt = parseFloat(usdtBalance.totals.available).toFixed(2);
       } catch (error) {
         // If USDT pair not found or no balance, default to "0.00"

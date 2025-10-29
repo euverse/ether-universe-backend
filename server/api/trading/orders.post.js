@@ -36,8 +36,8 @@ export default defineEventHandler(async (event) => {
   }
 
   // Check USDT balance (returns human-readable values)
-  const usdtBalances = await getTotalBalanceForPair(tradingAccount._id, "USDT");
-  const totalAvailableUsdt = parseFloat(usdtBalances.totals.available);
+  const usdtBalance = await getTradingAccountUSDTBalance(tradingAccount._id);
+  const totalAvailableUsdt = parseFloat(usdtBalance.totals.available).toFixed(2);
 
   // Calculate fee (0.5%)
   const fee = amount * 0.005;

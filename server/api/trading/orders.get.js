@@ -45,7 +45,7 @@ export default defineEventHandler(async (event) => {
             exitPrice: order.closingPrice || null,
             maxPrice: order.maxPrice || order.openingPrice,
             minPrice: order.minPrice || order.openingPrice,
-            pnl: order.pnl || 0,
+            pnL: order.pnL || 0,
             deliveryTime: order.deliveryTime,
             openedAt: order.openedAt,
             closedAt: order.closedAt || null

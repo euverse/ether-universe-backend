@@ -39,7 +39,7 @@ export default defineEventHandler(async (event) => {
         tradingAccount: accountId,
         ...ordersFilter
     })
-        .select('pnl closedAt')
+        .select('pnL closedAt')
         .sort({ closedAt: 1 })
         .lean();
 
@@ -49,15 +49,15 @@ export default defineEventHandler(async (event) => {
     const statistics = generateProfitStatistics(orders, interval, startDate, endDate);
 
     // Calculate totals
-    const totalPnl = orders.reduce((sum, o) => sum + (o.pnl || 0), 0);
-    const winningTrades = orders.filter(o => (o.pnl || 0) > 0).length;
-    const losingTrades = orders.filter(o => (o.pnl || 0) < 0).length;
+    const totalPnL = orders.reduce((sum, o) => sum + (o.pnL || 0), 0);
+    const winningTrades = orders.filter(o => (o.pnL || 0) > 0).length;
+    const losingTrades = orders.filter(o => (o.pnL || 0) < 0).length;
 
     return {
         accountId,
         statistics,
         summary: {
-            totalPnl: parseFloat(totalPnl.toFixed(2)),
+            totalPnL: parseFloat(totalPnL.toFixed(2)),
             totalTrades: orders.length,
             profitableTrades: winningTrades,
             losingTrades,
@@ -95,7 +95,7 @@ function generateProfitStatistics(orders, interval, startDate, endDate) {
     for (let time = startMs; time <= endMs; time += intervalMs) {
         buckets.push({
             timestamp: Math.floor(time / 1000),
-            pnl: 0
+            pnL: 0
         });
     }
 
@@ -109,17 +109,17 @@ function generateProfitStatistics(orders, interval, startDate, endDate) {
         const bucketIndex = Math.floor((orderTime - startMs) / intervalMs);
 
         if (bucketIndex >= 0 && bucketIndex < buckets.length) {
-            buckets[bucketIndex].pnl += order.pnl || 0;
+            buckets[bucketIndex].pnL += order.pnL || 0;
         }
     });
 
     // Build cumulative statistics
-    let cumulativePnl = 0;
+    let cumulativePnL = 0;
     const statistics = buckets.map(bucket => {
-        cumulativePnl += bucket.pnl;
+        cumulativePnL += bucket.pnL;
         return [
             bucket.timestamp,
-            parseFloat(cumulativePnl.toFixed(2))
+            parseFloat(cumulativePnL.toFixed(2))
         ];
     });
 

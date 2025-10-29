@@ -1,12 +1,10 @@
 
-
 export default defineEventHandler(async (event) => {
     try {
         const query = getQuery(event);
         const offset = parseInt(query.offset) || 0;
         const limit = parseInt(query.limit) || 20;
         const search = query.query || '';
-        const kycStatus = query.kycStatus || '';
         const accountStatus = query.accountStatus || '';
 
         const User = getModel('User');
@@ -52,23 +50,31 @@ export default defineEventHandler(async (event) => {
                 return sum + parseFloat(balance.balanceUsd || 0);
             }, 0);
 
-            const allocatedAmountUsd = 0;
+            let allocatedUsdt = '0';
+            try {
+                const { totals: { total } } = await getAllocationForPair({ userId: user._id }, "USDT");
+                allocatedUsdt = total
+            } catch {
+
+            }
 
             const Chat = getModel('Chat');
 
             const userChat = await Chat.findOne({ user: user._id }).select('messages').lean()
             const unreadMessages = userChat ? userChat.messages.filter(message => !message.seenAt).length : 0
 
+            const hasAllocations = await hasActiveAllocations({ userId: user._id })
             const userFullName = user.personalInfo?.firstName ? `${user.personalInfo?.firstName} ${user.personalInfo?.lastName || ''}` : 'Unverified User';
 
             return {
                 _id: user._id,
                 fullName: userFullName,
                 kycStatus,
-                allocatedAmountUsd: Math.round(allocatedAmountUsd),
+                allocatedUsdt: Math.round(allocatedUsdt),
                 userStatus: user.auth.status || 'active',
                 balanceUsd: Math.round(totalBalanceUsd),
                 unreadMessages,
+                hasAllocations,
                 biasedPositive: user.trading.biasedPositive ?? false,
                 createdAt: user.createdAt,
                 lastLogin: user.auth.lastLoggedInAt

@@ -17,8 +17,16 @@ const assetAllocationSchema = new Schema(
             ref: 'TradingPair',
             required: true
         },
-        amount: {
-            type: Number,
+        available: {
+            type: String,
+            default: '0'
+        },
+        locked: {
+            type: String,
+            default: '0'
+        },
+        total: {
+            type: String,
             required: true
         },
         expiresAt: {

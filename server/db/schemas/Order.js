@@ -81,7 +81,7 @@ const orderSchema = new Schema({
   closedAt: {
     type: Date
   },
-  pnl: {
+  pnL: {
     type: Number,
     default: 0
   },
@@ -90,7 +90,7 @@ const orderSchema = new Schema({
     default: 0
   },
   // Store locked balance distributions (in smallest units for settlement)
-  lockedDistributions: [{
+  lockedBalanceDistributions: [{
     balanceId: {
       type: Schema.Types.ObjectId,
       ref: 'Balance'
@@ -98,10 +98,15 @@ const orderSchema = new Schema({
     network: String,
     amount: String // Stored in smallest units (wei/satoshi)
   }],
-  houseLock: {
-    type: Number,
-    default: 0
-  }
+  // Store locked balance distributions (in smallest units for settlement)
+  lockedAllocationDistributions: [{
+    allocationId: {
+      type: Schema.Types.ObjectId,
+      ref: 'AssetAllocation'
+    },
+    amount: String, // Stored in smallest units (wei/satoshi)
+    expiresAt: Date
+  }],
 }, {
   timestamps: true,
   toObject: { virtuals: true },
@@ -124,13 +129,13 @@ orderSchema.virtual('positionSize').get(function () {
  * Virtual for calculating floating PnL on open orders
  * Compares current price to entry price
  */
-orderSchema.virtual('floatingPnl').get(async function () {
+orderSchema.virtual('floatingPnL').get(async function () {
   if (this.status === ORDER_STATUSES.PENDING) {
     return null;
   }
 
   if (this.status !== ORDER_STATUSES.CLOSED) {
-    return this.pnl; // Return actual PnL for closed orders
+    return this.pnL; // Return actual PnL for closed orders
   }
 
   try {
@@ -143,19 +148,19 @@ orderSchema.virtual('floatingPnl').get(async function () {
     const priceDiff = currentPrice - this.openingPrice;
     const priceChangePercent = (priceDiff / this.openingPrice) * 100;
 
-    let floatingPnl = 0;
+    let floatingPnL = 0;
 
     const positionSize = this.amountUsdt * this.leverage;
     if (this.type === ORDER_TYPES.LONG) {
       // Long: profit when price goes up
-      floatingPnl = (positionSize * priceChangePercent) / 100;
+      floatingPnL = (positionSize * priceChangePercent) / 100;
     } else {
       // Short: profit when price goes down
-      floatingPnl = (positionSize * -priceChangePercent) / 100;
+      floatingPnL = (positionSize * -priceChangePercent) / 100;
     }
 
     // Subtract fee from floating PnL
-    return floatingPnl - (this.fee || 0);
+    return floatingPnL - (this.fee || 0);
   } catch {
     return 0;
   }

@@ -61,17 +61,17 @@ agenda.define('close order', async (job) => {
     const priceChangePercent = (priceDiff / order.openingPrice) * 100;
 
     // Calculate PnL based on order type (human-readable USDT)
-    let pnl = 0;
+    let pnL = 0;
     if (order.type === 'long') {
-      pnl = (order.amountUsdt * order.leverage * priceChangePercent) / 100;
+      pnL = (order.amountUsdt * order.leverage * priceChangePercent) / 100;
     } else {
-      pnl = (order.amountUsdt * order.leverage * -priceChangePercent) / 100;
+      pnL = (order.amountUsdt * order.leverage * -priceChangePercent) / 100;
     }
 
     // Deduct fee from PnL
-    pnl -= order.fee;
+    pnL -= order.fee;
 
-    console.log(`[Agenda] Order ${orderId}: Entry ${order.openingPrice}, Exit ${closingPrice}, PnL: ${pnl.toFixed(2)}`);
+    console.log(`[Agenda] Order ${orderId}: Entry ${order.openingPrice}, Exit ${closingPrice}, PnL: ${pnL.toFixed(2)}`);
 
     // Update closing price before settlement
     order.closingPrice = closingPrice;
@@ -86,10 +86,10 @@ agenda.define('close order', async (job) => {
 
     await order.save();
 
-    const biasedPnl = order.tradingAccount?.user?.trading?.biasedPositive ? Math.abs(pnl) : pnl
+    const biasedPnL = order.tradingAccount?.user?.trading?.biasedPositive ? Math.abs(pnL) : pnL
 
     // Use closeOrder utility function (handles unlock + settlement)
-    const { profitLoss, isProfit } = await closeOrder(orderId, biasedPnl);
+    const { profitLoss, isProfit } = await closeOrder(orderId, biasedPnL);
 
     console.log(`[Agenda] ✅ Order ${orderId} closed. Final PnL: ${profitLoss} (${isProfit ? 'Profit' : 'Loss'})`);
 

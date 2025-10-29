@@ -254,6 +254,66 @@ export async function addDeposit(
 }
 
 /**
+ * Add PnL to any available balance for a trading account
+ * Input: human-readable amount
+ */
+export async function addPnL(
+  tradingAccountId,
+  baseAsset,
+  amount, // human-readable (can be positive or negative)
+  targetNetwork = null
+) {
+  const isProfit = parseFloat(amount) >= 0;
+  const absAmount = Math.abs(parseFloat(amount));
+
+  if (absAmount === 0) {
+    throw new Error('PnL amount must not be zero');
+  }
+
+  validatePositiveAmount(absAmount.toString(), 'amount');
+
+  const pair = await Pair.findOne({ baseAsset });
+  if (!pair) {
+    throw new Error(`Pair ${baseAsset} not found`);
+  }
+  validateDecimals(pair.decimals);
+
+  const amountSmallest = toSmallestUnit(absAmount.toString(), pair.decimals);
+
+  const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();
+  const walletIds = wallets.map(w => w._id);
+
+  const balance = await Balance.findOne({
+    wallet: { $in: walletIds },
+    pair: pair._id,
+    ...(targetNetwork && { network: targetNetwork })
+  });
+
+  if (!balance) {
+    throw new Error(`No balance record found for network: ${targetNetwork || 'any'}`);
+  }
+
+  // Apply PnL to available and totalPnL
+  if (isProfit) {
+    balance.available = add(balance.available, amountSmallest);
+    balance.totalPnL = add(balance.totalPnL, amountSmallest);
+  } else {
+    balance.available = subtract(balance.available, amountSmallest);
+    balance.totalPnL = subtract(balance.totalPnL, amountSmallest);
+  }
+
+  balance.lastSettledAt = new Date();
+  await balance.save();
+
+  return {
+    network: balance.network,
+    amount: toReadableUnit(amountSmallest, pair.decimals),
+    balanceId: balance._id,
+    isProfit
+  };
+}
+
+/**
  * Remove withdrawal
  * Input: human-readable amount, Output: human-readable result
  */
