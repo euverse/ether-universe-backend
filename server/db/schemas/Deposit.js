@@ -2,10 +2,11 @@ import { Schema } from "mongoose";
 import { NETWORKS } from "./Network";
 
 export const DEPOSIT_STATUS = {
-  PENDING: 'pending',      // Detected on-chain, ready to be swept
-  PROCESSING: 'processing', // Currently being swept (prevents concurrent sweeps)
-  SWEPT: 'swept',          // Successfully swept to admin wallet
-  FAILED: 'failed'         // Failed to sweep (will be retried)
+  PENDING: 'pending',           // Detected on-chain, ready to be swept
+  FUNDING_GAS: 'funding_gas',   // Sending ETH for gas (ERC-20 only)
+  PROCESSING: 'processing',     // Currently being swept (prevents concurrent sweeps)
+  SWEPT: 'swept',              // Successfully swept to admin wallet
+  FAILED: 'failed'             // Failed to sweep (will be retried)
 };
 
 const depositSchema = new Schema({
@@ -53,6 +54,18 @@ const depositSchema = new Schema({
     required: true
   },
 
+  // Gas funding tracking (for ERC-20 tokens)
+  gasFundingTxHash: {
+    type: String,
+    lowercase: true
+  },
+  gasFundingAmount: String,        // Amount of ETH sent for gas (in wei)
+  gasFundedAt: Date,
+  gasFundingAttempts: {
+    type: Number,
+    default: 0
+  },
+
   // Sweep tracking - for successful sweeps
   sweptAt: Date,
   sweepTxHash: {
@@ -82,7 +95,6 @@ const depositSchema = new Schema({
 
   // Critical error flag - for accounting mismatches
   accountingError: String,   // Set when sweep succeeds but accounting fails
-
 }, {
   timestamps: true
 });
@@ -93,5 +105,6 @@ depositSchema.index({ status: 1, network: 1 });                       // For swe
 depositSchema.index({ status: 1, retryCount: 1, failedAt: 1 });      // For retry mechanism
 depositSchema.index({ tradingAccount: 1, status: 1 });                // For user queries
 depositSchema.index({ wallet: 1, pair: 1, network: 1, amountSmallest: 1, createdAt: -1 }); // For duplicate detection
+depositSchema.index({ status: 1, gasFundingAttempts: 1 });            // For gas funding retry
 
 export default depositSchema;

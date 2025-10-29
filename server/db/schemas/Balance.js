@@ -22,6 +22,11 @@ const balanceSchema = new Schema({
         type: String,
         default: '0'
     },
+    // Available for sweep & transafers
+    availableGas: {
+        type:String,
+        default:'0'
+    },
     // Available for trading & withdrawing
     available: {
         type: String,
@@ -37,7 +42,6 @@ const balanceSchema = new Schema({
         type: String,
         default: '0'
     },
-    // Lifetime stats
     totalAllocated: {
         type: String,
         default: '0'
@@ -50,10 +54,14 @@ const balanceSchema = new Schema({
         type: String,
         default: '0'
     },
+    totalGas: {
+        type:String,
+        default:'0'
+    },
     lastDepositAt: Date,
     lastLockedAt: Date,
     lastUnlockedAt: Date,
-    lastSettledAt:Date,
+    lastSettledAt: Date,
     lastWithdrawalAt: Date,
     lastOnchainSyncAt: Date
 }, {

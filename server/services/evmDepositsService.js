@@ -315,25 +315,99 @@ async function hasEnoughEthForGas(network, walletAddress) {
 }
 
 /**
+ * Fund user wallet with ETH for gas (ERC-20 sweeps only)
+ * Sends ETH from admin wallet to user wallet to cover gas fees
+ */
+async function fundWalletWithGas(deposit, network, userWalletAddress) {
+    const sweepLogger = evmSweepLogger || console;
+
+    // Validate master mnemonic
+    if (!process.env.MASTER_MNEMONIC) {
+        throw new Error('MASTER_MNEMONIC environment variable not set');
+    }
+
+    // Get admin wallet for this network
+    const adminWallet = await AdminWallet.findOne({
+        chainType: CHAIN_TYPES.EVM,
+        network: network,
+        isActive: true
+    }).select('+derivationPath');
+
+    if (!adminWallet) {
+        throw new Error(`No active admin wallet found for EVM on ${network}`);
+    }
+
+    // Validate admin wallet address
+    if (!adminWallet.address || !ethers.isAddress(adminWallet.address)) {
+        throw new Error(`Invalid admin wallet address for ${network}`);
+    }
+
+    // Get provider and create admin signer
+    const provider = getProvider(network);
+    const adminSigner = createSignerFromMnemonic(
+        process.env.MASTER_MNEMONIC,
+        adminWallet.derivationPath,
+        provider
+    );
+
+    // Calculate required gas amount
+    const gasAmountNeeded = await calculateGasForERC20Transfer(provider);
+
+    // Check admin wallet has enough ETH
+    const adminEthBalance = await provider.getBalance(adminWallet.address);
+    if (adminEthBalance < BigInt(gasAmountNeeded)) {
+        throw new Error(
+            `Admin wallet has insufficient ETH. Balance: ${ethers.formatEther(adminEthBalance)} ETH, ` +
+            `Required: ${ethers.formatEther(gasAmountNeeded)} ETH`
+        );
+    }
+
+    sweepLogger.log(`Funding wallet ${userWalletAddress} with ${ethers.formatEther(gasAmountNeeded)} ETH for gas`);
+
+    // Send ETH from admin to user wallet for gas
+    const fundingResult = await evmTransfer({
+        provider,
+        signer: adminSigner,
+        toAddress: userWalletAddress,
+        amount: gasAmountNeeded,
+        deductGasFromAmount: false // Admin pays its own gas
+    });
+
+    // Update deposit record with gas funding info
+    deposit.gasFundingTxHash = fundingResult.txHash;
+    deposit.gasFundingAmount = fundingResult.actualAmount;
+    deposit.gasFundedAt = new Date();
+    deposit.gasFundingAttempts = (deposit.gasFundingAttempts || 0) + 1;
+    await deposit.save();
+
+    sweepLogger.log(`Gas funding successful. TX: ${fundingResult.txHash}`);
+
+    return fundingResult;
+}
+
+
+/**
  * Sweep pending deposits to admin wallet
  * Takes deposits in PENDING status and moves funds to admin wallet
+ * For ERC-20 tokens: funds gas first, then sweeps
  */
 export async function sweepPendingDeposits() {
     const sweepLogger = evmSweepLogger || console;
     try {
-        // Get pending deposits ready to be swept
-        const depositsToSweep = await Deposit.find({
+        // Get pending deposits ready to be swept OR those waiting for gas funding confirmation
+        const depositsToProcess = await Deposit.find({
             network: { $in: [NETWORKS.ETHEREUM, NETWORKS.POLYGON] },
-            status: DEPOSIT_STATUS.PENDING
+            status: { $in: [DEPOSIT_STATUS.PENDING, DEPOSIT_STATUS.FUNDING_GAS] }
         }).populate('wallet pair balance');
 
         const results = {
             swept: 0,
+            gasFunded: 0,
             failed: 0,
             details: []
         };
 
-        for (const deposit of depositsToSweep) {
+        for (const deposit of depositsToProcess) {
             // Validate populated fields
             if (!deposit.wallet || !deposit.pair || !deposit.balance) {
                 sweepLogger.error(`Invalid deposit ${deposit._id}: missing populated fields`);
@@ -348,40 +422,116 @@ export async function sweepPendingDeposits() {
                 continue;
             }
 
-            // For ERC-20 tokens, check if wallet has enough ETH for gas
+            // Determine if this is an ERC-20 token
             const isERC20 = deposit.pair.contractAddresses?.get?.(deposit.network);
-            if (isERC20) {
-                const hasEth = await hasEnoughEthForGas(deposit.network, deposit.wallet.address);
-                if (!hasEth) {
-                    sweepLogger.warn(`Wallet ${deposit.wallet._id} has insufficient ETH for gas on ${deposit.network}. Skipping for now.`);
-                    continue; // Skip but don't mark as failed - might get ETH later
-                }
-            }
 
             try {
-                // Simple concurrent sweep prevention - mark as processing
-                const updated = await Deposit.findOneAndUpdate(
-                    { _id: deposit._id, status: DEPOSIT_STATUS.PENDING },
-                    { $set: { status: DEPOSIT_STATUS.PROCESSING } },
-                    { new: true }
-                )
-                    .populate('wallet')
-                    .exec();
+                // === HANDLE ERC-20 GAS FUNDING ===
+                if (isERC20 && deposit.status === DEPOSIT_STATUS.PENDING) {
+                    // Check if wallet already has enough ETH for gas
+                    const hasEth = await hasEnoughEthForGas(deposit.network, deposit.wallet.address);
 
-                if (!updated) {
-                    sweepLogger.log(`Deposit ${deposit._id} already being processed`);
-                    continue;
+                    if (!hasEth) {
+                        // Prevent excessive funding attempts
+                        if ((deposit.gasFundingAttempts || 0) >= 3) {
+                            sweepLogger.warn(`Deposit ${deposit._id} has exceeded max gas funding attempts (3). Skipping.`);
+                            continue;
+                        }
+
+                        // Mark as funding gas
+                        const updated = await Deposit.findOneAndUpdate(
+                            { _id: deposit._id, status: DEPOSIT_STATUS.PENDING },
+                            { $set: { status: DEPOSIT_STATUS.FUNDING_GAS } },
+                            { new: true }
+                        ).populate('wallet pair balance');
+
+                        if (!updated) {
+                            sweepLogger.log(`Deposit ${deposit._id} already being processed`);
+                            continue;
+                        }
+
+                        try {
+                            // Fund the wallet with gas
+                            await fundWalletWithGas(updated, deposit.network, deposit.wallet.address);
+
+                            // After funding, mark back as PENDING so it will be swept in next iteration
+                            updated.status = DEPOSIT_STATUS.PENDING;
+                            await updated.save();
+
+                            results.gasFunded++;
+                            results.details.push({
+                                depositId: deposit._id,
+                                amount: deposit.amount,
+                                pair: deposit.pair.symbol,
+                                network: deposit.network,
+                                status: 'gas_funded'
+                            });
+
+                            sweepLogger.log(`Gas funded for deposit ${deposit._id}. Will sweep in next cycle.`);
+                            continue; // Move to next deposit, this one will be swept in next iteration
+
+                        } catch (fundingError) {
+                            // Mark as failed
+                            await Deposit.findByIdAndUpdate(deposit._id, {
+                                status: DEPOSIT_STATUS.FAILED,
+                                failureReason: `Gas funding failed: ${fundingError.message}`,
+                                failedAt: new Date()
+                            });
+
+                            results.failed++;
+                            results.details.push({
+                                depositId: deposit._id,
+                                amount: deposit.amount,
+                                pair: deposit.pair.symbol,
+                                network: deposit.network,
+                                status: 'gas_funding_failed',
+                                error: fundingError.message
+                            });
+
+                            sweepLogger.error(`Failed to fund gas for deposit ${deposit._id}:`, fundingError);
+                            continue;
+                        }
+                    }
+                    // If has ETH, fall through to sweep below
                 }
 
-                await sweepSingleDeposit(updated);
-                results.swept++;
-                results.details.push({
-                    depositId: deposit._id,
-                    amount: deposit.amount,
-                    pair: deposit.pair.symbol,
-                    network: deposit.network,
-                    status: 'success'
-                });
+                // === HANDLE SWEEP (Native tokens OR ERC-20 with gas funded) ===
+                if (deposit.status === DEPOSIT_STATUS.PENDING) {
+                    // For ERC-20, verify gas is still available (in case it was consumed)
+                    if (isERC20) {
+                        const hasEth = await hasEnoughEthForGas(deposit.network, deposit.wallet.address);
+                        if (!hasEth) {
+                            sweepLogger.warn(`Wallet ${deposit.wallet._id} lost ETH after funding. Will retry funding.`);
+                            // Reset to allow refunding
+                            continue;
+                        }
+                    }
+
+                    // Mark as processing to prevent concurrent sweeps
+                    const updated = await Deposit.findOneAndUpdate(
+                        { _id: deposit._id, status: DEPOSIT_STATUS.PENDING },
+                        { $set: { status: DEPOSIT_STATUS.PROCESSING } },
+                        { new: true }
+                    )
+                        .populate('wallet')
+                        .exec();
+
+                    if (!updated) {
+                        sweepLogger.log(`Deposit ${deposit._id} already being processed`);
+                        continue;
+                    }
+
+                    await sweepSingleDeposit(updated);
+                    results.swept++;
+                    results.details.push({
+                        depositId: deposit._id,
+                        amount: deposit.amount,
+                        pair: deposit.pair.symbol,
+                        network: deposit.network,
+                        status: 'success'
+                    });
+                }
+
             } catch (error) {
                 // Mark as FAILED for retry later
                 await Deposit.findByIdAndUpdate(deposit._id, {
@@ -399,17 +549,17 @@ export async function sweepPendingDeposits() {
                     status: 'failed',
                     error: error.message
                 });
-                sweepLogger.error(`Failed to sweep deposit ${deposit._id}:`, error);
+                sweepLogger.error(`Failed to process deposit ${deposit._id}:`, error);
             }
         }
 
-        sweepLogger.log(`Completed: ${results.swept} swept, ${results.failed} failed`);
+        sweepLogger.log(`Completed: ${results.swept} swept, ${results.gasFunded} gas funded, ${results.failed} failed`);
 
         return results;
 
     } catch (error) {
         sweepLogger.error('Error:', error);
-        return { swept: 0, failed: 0, details: [] };
+        return { swept: 0, gasFunded: 0, failed: 0, details: [] };
     }
 }
 

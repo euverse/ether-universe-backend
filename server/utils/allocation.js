@@ -67,6 +67,43 @@ export async function createAllocation(userId, baseAsset, amount) {
     };
 }
 
+
+export async function getAssetAllocation(tradingAccountId, pairId) {
+    try {
+        if (!tradingAccount) {
+            throw Error("Trading account not found")
+        }
+
+        const TradingAccount = getModel('TradingAccount');
+
+        const tradingAccount = await TradingAccount.findById(tradingAccountId)
+
+        if (!tradingAccount) {
+            throw Error("Trading account not found")
+        }
+
+        const AssetAllocation = getModel('AssetAllocation');
+
+        const allocations = await AssetAllocation.find({
+            tradingAccount: tradingAccountId,
+            pair: pairId
+        })
+
+        if (allocations.length === 0) return {};
+        else {
+            return allocations.reduce((acc, allocation) => ({
+                amount: add(acc.amount || 0, allocation.amount),
+                amountSmallest: add(acc.amountSmallest || 0, allocation.amount)
+            }), {})
+        }
+
+    } catch (error) {
+        console.error('Error')
+        return {}
+
+    }
+}
+
 /**
  * Get allocation history for a user
  */
