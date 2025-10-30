@@ -302,8 +302,7 @@ async function executeBlockchainWithdrawal({
   pair,
   network,
   amount,
-  recipientAddress,
-  isAdminWithdrawal = false
+  recipientAddress
 }) {
   const chainType = getChainType(network);
 
@@ -337,7 +336,7 @@ async function executeEvmWithdrawal({
   const adminWallet = await AdminWallet.findOne({
     chainType: CHAIN_TYPES.EVM,
     isActive: true
-  });
+  }).select('+derivationPath');
 
   if (!adminWallet) {
     throw new Error(`No active admin wallet found for evm`);
@@ -399,7 +398,7 @@ async function executeBtcWithdrawal({
   const adminWallet = await AdminWallet.findOne({
     chainType: CHAIN_TYPES.BTC,
     isActive: true
-  });
+  }).select('+derivationPath');
 
   if (!adminWallet) {
     throw new Error(`No active admin wallet found for Bitcoin`);
@@ -508,16 +507,4 @@ function getChainType(network) {
   };
 
   return networkConfig[network];
-}
-
-/**
- * Get Bitcoin API URL based on network
- */
-function getBitcoinApiUrl(network) {
-  const apiUrls = {
-    [NETWORKS.BITCOIN]: 'https://blockstream.info/api',
-    [NETWORKS.BITCOIN_TESTNET]: 'https://blockstream.info/testnet/api',
-  };
-
-  return apiUrls[network];
 }
