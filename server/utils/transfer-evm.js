@@ -1,5 +1,12 @@
 import { ethers } from 'ethers';
 
+export function validateEVMAddress(walletAddress, { type = "wallet", errorMsg = "" } = {}) {
+    if (!ethers.isAddress(walletAddress)) {
+        throw new Error(errorMsg || `Invalid ${type} address: ${walletAddress}`);
+    }
+}
+
+
 /**
  * Calculate estimated gas cost for an ERC-20 token transfer
  * 
@@ -58,9 +65,7 @@ export async function evmTransfer({
         throw new Error('Missing required parameters: provider, signer, toAddress, and amount are required');
     }
 
-    if (!ethers.isAddress(toAddress)) {
-        throw new Error(`Invalid recipient address: ${toAddress}`);
-    }
+    validateEVMAddress(toAddress, { errorMsg: `Invalid recipient address: ${toAddress}` })
 
     const amountBigInt = BigInt(amount);
     if (amountBigInt <= BigInt(0)) {
@@ -154,9 +159,7 @@ export async function evmTransfer({
     else {
         const { address: tokenAddress, decimals } = tokenConfig;
 
-        if (!ethers.isAddress(tokenAddress)) {
-            throw new Error(`Invalid token address: ${tokenAddress}`);
-        }
+        validateEVMAddress(tokenAddress, { errorMsg: `Invalid token address: ${tokenAddress}` })
 
         if (!decimals || decimals < 0) {
             throw new Error(`Invalid token decimals: ${decimals}`);

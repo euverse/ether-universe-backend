@@ -2,7 +2,6 @@ import { ethers } from 'ethers';
 import { CHAIN_TYPES, NETWORKS } from '../db/schemas/Network.js';
 import { DEPOSIT_STATUS } from '../db/schemas/Deposit.js';
 import { evmDepositScanLogger, evmSweepLogger } from './logService.js';
-import { validateDecimals } from '../utils/balances.js';
 
 const Pair = getModel('Pair');
 const Wallet = getModel('Wallet');
@@ -44,12 +43,6 @@ function isNetworkSupported(network) {
     return Object.keys(RPC_ENDPOINTS).includes(network);
 }
 
-function validateEVMAddress(walletAddress, type = "wallet") {
-    if (!ethers.isAddress(walletAddress)) {
-        throw new Error(`Invalid ${type} address: ${walletAddress}`);
-    }
-}
-
 /**
  * Get native token balance for an address
  */
@@ -65,7 +58,7 @@ async function getNativeBalance(network, walletAddress) {
  * Get ERC-20 token balance for an address
  */
 async function getTokenBalance(network, tokenAddress, walletAddress, decimals) {
-    validateEVMAddress(tokenAddress, "token")
+    validateEVMAddress(tokenAddress, { type: "token" })
     validateEVMAddress(walletAddress)
     validateDecimals(decimals)
 
@@ -332,7 +325,7 @@ async function fundWalletWithGas(deposit, network, userWalletAddress) {
     }
 
 
-    validateEVMAddress(adminWallet?.address, "admin wallet")
+    validateEVMAddress(adminWallet?.address, { type: "admin wallet" })
 
     // Get provider and create admin signer
     const provider = getProvider(network);
@@ -636,7 +629,7 @@ async function sweepSingleDeposit(deposit) {
     }
 
     // Validate admin wallet address
-    validateEVMAddress(adminWallet?.address, "admin wallet")
+    validateEVMAddress(adminWallet?.address, { type: "admin wallet" })
 
     // Get provider and create signer
     const provider = getProvider(network);
@@ -664,9 +657,7 @@ async function sweepSingleDeposit(deposit) {
         // ERC-20 token transfer
         const tokenAddress = pair.contractAddresses.get(network);
 
-        if (!ethers.isAddress(tokenAddress)) {
-            throw new Error(`Invalid token contract address for ${pair.symbol} on ${network}`);
-        }
+        validateEVMAddress(tokenAddress, { errorMsg: `Invalid token contract address for ${pair.symbol} on ${network}` })
 
         transferResult = await evmTransfer({
             provider,

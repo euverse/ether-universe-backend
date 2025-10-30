@@ -372,10 +372,14 @@ async function executeEvmWithdrawal({
     amount: amountSmallest
   };
 
+  const tokenAddress = pair.contractAddresses?.get?.(network);
+
   // Add token config if not native token
-  if (pair.contractAddress) {
+  if (tokenAddress) {
+    validateEVMAddress(tokenAddress, { errorMsg: `Invalid token contract address for ${pair.symbol} on ${network}` })
+
     transferParams.tokenConfig = {
-      address: pair.contractAddress,
+      address: tokenAddress,
       decimals: pair.decimals
     };
   }
