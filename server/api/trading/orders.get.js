@@ -38,17 +38,12 @@ export default defineEventHandler(async (event) => {
             },
             type: order.type,
             amountUsdt: order.amountUsdt,
-            leverage: order.leverage,
-            fee: order.fee || 0,
             status: order.status,
-            entryPrice: order.openingPrice,
-            exitPrice: order.closingPrice || null,
-            maxPrice: order.maxPrice || order.openingPrice,
-            minPrice: order.minPrice || order.openingPrice,
+            purchasePrice: order.purchasePrice,
+            deliveryPrice: order.deliveryPrice || null,
             pnL: order.pnL || 0,
-            deliveryTime: order.deliveryTime,
-            openedAt: order.openedAt,
-            closedAt: order.closedAt || null
+            purchasedAt: order.purchasedAt,
+            deliveredAt: order.deliveredAt || null
         }))
     };
 });

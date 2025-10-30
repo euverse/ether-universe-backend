@@ -76,6 +76,8 @@ export async function getBalancesByPair(tradingAccountId, { includeZeroBalances 
   // Group by pair (in smallest units)
   const grouped = {};
 
+  let usdtAllocationsIncluded = false
+
   for (const balance of balances) {
     if (!balance.pair) {
       throw new Error(`Balance ${balance._id} is missing pair reference`);
@@ -108,6 +110,20 @@ export async function getBalancesByPair(tradingAccountId, { includeZeroBalances 
       total
     };
 
+
+    if (balance.pair.baseAsset === "USDT") {
+      if (!usdtAllocationsIncluded) {
+        const { totals } = await getAllocationForPair({ tradingAccountId }, "USDT")
+
+        grouped[pairSymbol].totals.available = add(grouped[pairSymbol].totals.available, toSmallestUnit(totals.available, balance.pair.decimals));
+        grouped[pairSymbol].totals.locked = add(grouped[pairSymbol].totals.locked, toSmallestUnit(totals.locked, balance.pair.decimals));
+        grouped[pairSymbol].totals.total = add(grouped[pairSymbol].totals.total, toSmallestUnit(totals.total, balance.pair.decimals));
+
+        usdtAllocationsIncluded = true
+      };
+
+    }
+
     grouped[pairSymbol].totals.initial = add(grouped[pairSymbol].totals.initial, balance.initial);
     grouped[pairSymbol].totals.available = add(grouped[pairSymbol].totals.available, balance.available);
     grouped[pairSymbol].totals.locked = add(grouped[pairSymbol].totals.locked, balance.locked);
@@ -115,6 +131,7 @@ export async function getBalancesByPair(tradingAccountId, { includeZeroBalances 
     grouped[pairSymbol].totals.totalDeposited = add(grouped[pairSymbol].totals.totalDeposited, balance.totalDeposited);
     grouped[pairSymbol].totals.totalAllocated = add(grouped[pairSymbol].totals.totalAllocated, balance.totalAllocated);
     grouped[pairSymbol].totals.totalWithdrawn = add(grouped[pairSymbol].totals.totalWithdrawn, balance.totalWithdrawn);
+
   }
 
   return formatGroupedBalances(grouped);

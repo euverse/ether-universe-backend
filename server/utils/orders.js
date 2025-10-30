@@ -3,6 +3,8 @@ import { ORDER_STATUSES } from "~/db/schemas/Order";
 const Pair = getModel("Pair")
 const Order = getModel("Order")
 const Balance = getModel("Balance")
+const AssetAllocation = getModel("AssetAllocation")
+
 
 /**
  * Get total USDT available across both allocations and balances
@@ -44,6 +46,11 @@ export async function getTradingAccountUSDTBalance(tradingAccountId) {
         breakdown: {
             allocations: allocationStats.totals,
             balances: balanceStats.totals
+        },
+        smallestUnits: {
+            available: totalAvailable,
+            locked: totalLocked,
+            total: grandTotal,
         }
     };
 }
@@ -165,6 +172,97 @@ export async function unlockUSDT({ allocations, balances }) {
 }
 
 /**
+ * Distribute loss across allocations proportionally based on locked amounts
+ * @param {string} baseAsset - The base asset symbol
+ * @param {Array} lockedAllocationDistributions - Array of locked allocation distributions
+ * @param {number} loss - Human-readable loss amount (positive number)
+ * @returns {Promise<Object>} Distribution result
+ */
+export async function distributeLoss(
+    baseAsset,
+    lockedAllocationDistributions,
+    loss
+) {
+    if (isZero(Math.abs(loss)) || loss <= 0) {
+        throw new Error('Loss must be a positive non-zero value');
+    }
+
+    const pair = await Pair.findOne({ baseAsset });
+    if (!pair) {
+        throw new Error(`Pair ${baseAsset} not found`);
+    }
+
+    validateDecimals(pair.decimals);
+    const lossSmallest = toSmallestUnit(Math.abs(loss), pair.decimals);
+
+    // Filter out expired locks
+    const now = new Date();
+    const validDistributions = lockedAllocationDistributions.filter(
+        d => !d.expiresAt || new Date(d.expiresAt) > now
+    );
+
+    if (validDistributions.length === 0) {
+        throw new Error('No valid (non-expired) locked allocations found');
+    }
+
+    // Calculate total locked for proportional distribution
+    const totalLocked = validDistributions.reduce(
+        (sum, d) => add(sum, d.amount),
+        '0'
+    );
+
+    if (isZero(totalLocked)) {
+        throw new Error('Total locked amount is zero');
+    }
+
+    const errors = [];
+    const processed = [];
+    let totalDistributed = '0';
+
+    for (const dist of validDistributions) {
+        try {
+            const allocation = await AssetAllocation.findById(dist.allocationId);
+
+            if (!allocation) {
+                errors.push(`Allocation ${dist.allocationId} not found`);
+                continue;
+            }
+
+            // Calculate proportional share of the loss
+            const proportion = calculateProportion(dist.amount, totalLocked);
+            const lossShare = multiply(lossSmallest, proportion);
+
+            // Deduct from available (losses always reduce available)
+            allocation.available = max(subtract(allocation.available, lossShare), '0');
+
+            // Update total as well
+            allocation.total = max(subtract(allocation.total, lossShare), '0');
+
+            await allocation.save();
+
+            totalDistributed = add(totalDistributed, lossShare);
+            processed.push({
+                allocationId: dist.allocationId,
+                lossShare: toReadableUnit(lossShare, pair.decimals)
+            });
+
+        } catch (error) {
+            errors.push(`Failed to distribute loss to allocation ${dist.allocationId}: ${error.message}`);
+        }
+    }
+
+    if (errors.length > 0) {
+        throw new Error(`Loss distribution completed with errors: ${errors.join('; ')}`);
+    }
+
+    return {
+        totalDistributed: toReadableUnit(totalDistributed, pair.decimals),
+        processed,
+        allocationsAffected: processed.length
+    };
+}
+
+/**
  * Distribute PnL across balances proportionally
  * Input: distributions in smallest units, human-readable PnL
  */
@@ -239,45 +337,116 @@ export async function distributePnL(
  * Unlocks funds and distributes PnL
  */
 export async function settleOrder(
-    tradingAccountId,
-    baseAsset,
-    lockedBalanceDistributions,
-    lockedAllocationDistributions,
-    profitOrLoss, // human-readable
-    isProfit
+  tradingAccountId,
+  baseAsset,
+  lockedBalanceDistributions,
+  lockedAllocationDistributions,
+  profitOrLoss, // human-readable
+  isProfit
 ) {
-    // Step 1: Unlock original amounts
-    const unlockResult = await unlockUSDT({
-        allocations: lockedAllocationDistributions,
-        balances: lockedBalanceDistributions
-    });
+  // Step 1: Unlock original amounts
+  const unlockResult = await unlockUSDT({
+    allocations: lockedAllocationDistributions,
+    balances: lockedBalanceDistributions
+  });
 
-    // Step 2: Distribute PnL if any
-    let pnLResult = null;
-    if (profitOrLoss !== 0) {
-        // If we have balance distributions, use proportional distribution
-        if (lockedBalanceDistributions && lockedBalanceDistributions.length > 0) {
-            pnLResult = await distributePnL(
-                baseAsset,
-                lockedBalanceDistributions,
-                profitOrLoss,
-                isProfit
-            );
-        } else {
-            // No balance distributions (only allocations), add PnL to any balance
-            pnLResult = await addPnL(
-                tradingAccountId,
-                baseAsset,
-                isProfit ? profitOrLoss : `-${profitOrLoss}`
-            );
-        }
+  // Step 2: Distribute PnL if any
+  let pnLResult = null;
+  
+  if (profitOrLoss !== 0) {
+    const hasBalanceLocks = lockedBalanceDistributions && lockedBalanceDistributions.length > 0;
+    const hasAllocationLocks = lockedAllocationDistributions && lockedAllocationDistributions.length > 0;
+
+    if (isProfit) {
+      // PROFIT scenarios
+      if (hasBalanceLocks && hasAllocationLocks) {
+        // Both locks -> distributePnL (only to balances for profit)
+        pnLResult = await distributePnL(
+          baseAsset,
+          lockedBalanceDistributions,
+          profitOrLoss,
+          isProfit
+        );
+      } else if (hasBalanceLocks) {
+        // Balance locks only -> distributePnL
+        pnLResult = await distributePnL(
+          baseAsset,
+          lockedBalanceDistributions,
+          profitOrLoss,
+          isProfit
+        );
+      } else {
+        // Allocation locks only -> addPnL
+        pnLResult = await addPnL(
+          tradingAccountId,
+          baseAsset,
+          profitOrLoss
+        );
+      }
+    } else {
+      // LOSS scenarios
+      if (hasBalanceLocks && hasAllocationLocks) {
+        // Both locks -> determine loss distribution from locks proportionally
+        const totalBalanceLocked = lockedBalanceDistributions.reduce(
+          (sum, d) => add(sum, d.amount), 
+          '0'
+        );
+        const totalAllocationLocked = lockedAllocationDistributions.reduce(
+          (sum, d) => add(sum, d.amount), 
+          '0'
+        );
+        const totalLocked = add(totalBalanceLocked, totalAllocationLocked);
+
+        // Calculate proportional losses
+        const balanceProportion = calculateProportion(totalBalanceLocked, totalLocked);
+        const allocationProportion = calculateProportion(totalAllocationLocked, totalLocked);
+        
+        const balanceLoss = multiply(profitOrLoss.toString(), balanceProportion);
+        const allocationLoss = multiply(profitOrLoss.toString(), allocationProportion);
+
+        // Distribute to both
+        const balanceResult = await distributePnL(
+          baseAsset,
+          lockedBalanceDistributions,
+          parseFloat(balanceLoss),
+          false
+        );
+        
+        const allocationResult = await distributeLoss(
+          baseAsset,
+          lockedAllocationDistributions,
+          parseFloat(allocationLoss)
+        );
+
+        pnLResult = {
+          totalDistributed: profitOrLoss,
+          balanceLoss: balanceResult.totalDistributed,
+          allocationLoss: allocationResult.totalDistributed
+        };
+      } else if (hasBalanceLocks) {
+        // Balance locks only -> distributePnL
+        pnLResult = await distributePnL(
+          baseAsset,
+          lockedBalanceDistributions,
+          profitOrLoss,
+          isProfit
+        );
+      } else if (hasAllocationLocks) {
+        // Allocation locks only -> distributeLoss
+        pnLResult = await distributeLoss(
+          baseAsset,
+          lockedAllocationDistributions,
+          profitOrLoss
+        );
+      }
     }
+  }
 
-    return {
-        totalUnlocked: unlockResult.totalUnlocked,
-        totalPnL: pnLResult?.totalDistributed || pnLResult?.amount || '0',
-        isProfit
-    };
+  return {
+    totalUnlocked: unlockResult.totalUnlocked,
+    totalPnL: pnLResult?.totalDistributed || pnLResult?.amount || '0',
+    isProfit
+  };
 }
 
 // ORDER MANAGEMENT FUNCTIONS
@@ -313,10 +482,10 @@ export async function placeOrder(
             leverage: parseFloat(leverage),
             status: ORDER_STATUSES.OPEN,
             deliveryTime,
-            openingPrice: parseFloat(entryPrice),
+            purchasePrice: parseFloat(entryPrice),
             maxPrice: parseFloat(entryPrice),
             minPrice: parseFloat(entryPrice),
-            openedAt: new Date(),
+            purchasedAt: new Date(),
             pnL: 0,
             fee: parseFloat(fee),
             lockedBalanceDistributions: locked.distributions.balances, // Stored in smallest units
@@ -391,7 +560,7 @@ export async function closeOrder(orderId, profitLossAmount) {
     // Update order
     order.status = ORDER_STATUSES.CLOSED;
     order.pnL = profitLoss;
-    order.closedAt = new Date();
+    order.deliveredAt = new Date();
     await order.save();
 
     return {

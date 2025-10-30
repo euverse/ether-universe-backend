@@ -25,12 +25,12 @@ export default defineEventHandler(async (event) => {
     const ordersFilter = { status: ORDER_STATUSES.CLOSED };
 
     if (startDate) {
-        ordersFilter.closedAt = { $gte: new Date(startDate) };
+        ordersFilter.deliveredAt = { $gte: new Date(startDate) };
     }
 
     if (endDate) {
-        if (!ordersFilter.closedAt) ordersFilter.closedAt = {};
-        ordersFilter.closedAt.$lte = new Date(endDate);
+        if (!ordersFilter.deliveredAt) ordersFilter.deliveredAt = {};
+        ordersFilter.deliveredAt.$lte = new Date(endDate);
     }
 
     // Get closed orders
@@ -39,8 +39,8 @@ export default defineEventHandler(async (event) => {
         tradingAccount: accountId,
         ...ordersFilter
     })
-        .select('pnL closedAt')
-        .sort({ closedAt: 1 })
+        .select('pnL deliveredAt')
+        .sort({ deliveredAt: 1 })
         .lean();
 
     console.log('Orders found:', orders.length);
@@ -66,7 +66,7 @@ export default defineEventHandler(async (event) => {
                 : 0
         },
         period: {
-            startDate: startDate || (orders.length > 0 ? orders[0].closedAt : null),
+            startDate: startDate || (orders.length > 0 ? orders[0].deliveredAt : null),
             endDate: endDate || new Date().toISOString()
         }
     };
@@ -81,7 +81,7 @@ function generateProfitStatistics(orders, interval, startDate, endDate) {
     }
 
     // Determine time range
-    const start = startDate ? new Date(startDate) : new Date(orders[0].closedAt);
+    const start = startDate ? new Date(startDate) : new Date(orders[0].deliveredAt);
     const end = endDate ? new Date(endDate) : new Date();
 
     const intervalMs = getIntervalMs(interval);
@@ -101,9 +101,9 @@ function generateProfitStatistics(orders, interval, startDate, endDate) {
 
     // Assign orders to buckets
     orders.forEach(order => {
-        if (!order.closedAt) return;
+        if (!order.deliveredAt) return;
 
-        const orderTime = new Date(order.closedAt).getTime();
+        const orderTime = new Date(order.deliveredAt).getTime();
 
         // Find the bucket this order belongs to
         const bucketIndex = Math.floor((orderTime - startMs) / intervalMs);

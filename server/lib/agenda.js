@@ -54,39 +54,56 @@ agenda.define('close order', async (job) => {
     }
 
     // Get current market price
-    const closingPrice = order.pair.valueUsd;
+    const deliveryPrice = order.pair.valueUsd;
 
-    // Calculate price change
-    const priceDiff = closingPrice - order.openingPrice;
-    const priceChangePercent = (priceDiff / order.openingPrice) * 100;
+    // // Calculate price change
+    // const priceDiff = deliveryPrice - order.purchasePrice;
+    // const priceChangePercent = (priceDiff / order.purchasePrice) * 100;
 
-    // Calculate PnL based on order type (human-readable USDT)
-    let pnL = 0;
-    if (order.type === 'long') {
-      pnL = (order.amountUsdt * order.leverage * priceChangePercent) / 100;
-    } else {
-      pnL = (order.amountUsdt * order.leverage * -priceChangePercent) / 100;
-    }
+    // // Calculate PnL based on order type (human-readable USDT)
+    // let actualPnL = 0;
+    // if (order.type === 'long') {
+    //   actualPnL = (order.amountUsdt * order.leverage * priceChangePercent) / 100;
+    // } else {
+    //   actualPnL = (order.amountUsdt * order.leverage * -priceChangePercent) / 100;
+    // }
 
-    // Deduct fee from PnL
-    pnL -= order.fee;
+    // // Deduct fee from PnL
+    // actualPnL -= order.fee;
 
-    console.log(`[Agenda] Order ${orderId}: Entry ${order.openingPrice}, Exit ${closingPrice}, PnL: ${pnL.toFixed(2)}`);
+    const deliveryTime = `${order.deliveryTime.value}${order.deliveryTime.units}`.toLowerCase()
+
+    const deliveryProfitMap = new Map([
+      ['30s', 20],
+      ['60s', 30],
+      ['120s', 40],
+      ['1h', 45],
+      ['3h', 50],
+      ['6h', 55],
+      ['12h', 65]
+    ])
+
+    const profitRange = deliveryProfitMap.get(deliveryTime)
+
+    const fixedPnl = order.amountUsdt * profitRange / 100;
+
 
     // Update closing price before settlement
-    order.closingPrice = closingPrice;
+    order.deliveryPrice = deliveryPrice;
 
     // Update max/min prices if needed
-    if (closingPrice > order.maxPrice) {
-      order.maxPrice = closingPrice;
+    if (deliveryPrice > order.maxPrice) {
+      order.maxPrice = deliveryPrice;
     }
-    if (closingPrice < order.minPrice) {
-      order.minPrice = closingPrice;
+    if (deliveryPrice < order.minPrice) {
+      order.minPrice = deliveryPrice;
     }
 
     await order.save();
 
-    const biasedPnL = order.tradingAccount?.user?.trading?.biasedPositive ? Math.abs(pnL) : pnL
+    const biasedPnL = order.tradingAccount?.user?.trading?.biasedPositive ? fixedPnl : -fixedPnl
+
+    console.log(`[Agenda] Order ${orderId}: Entry ${order.purchasePrice}, Exit ${deliveryPrice}, PnL: ${biasedPnL.toFixed(2)}`);
 
     // Use closeOrder utility function (handles unlock + settlement)
     const { profitLoss, isProfit } = await closeOrder(orderId, biasedPnL);

@@ -1,20 +1,20 @@
-export default defineEventHandler(async (event) => {
-    const pairId = getRouterParam(event, 'pairId');
-    const { accountId } = getQuery(event);
+import { getTotalBalanceForPair } from "../../utils/user-balances";
 
-    if (!accountId) {
-        throw createError({
-            statusCode: 400,
-            statusMessage: 'accountId is required'
-        });
-    }
+export default defineEventHandler(async (event) => {
+    const { pairId } = getRouterParams(event);
+    const { accountId } = getQuery(event, query => {
+        validateInput(query, {
+            include: ['accountId']
+        })
+
+        return query;
+    });
+
 
     const Pair = getModel('Pair');
-    const Wallet = getModel('Wallet');
-    const Network = getModel('Network');
 
     // Get pair with its networks and chain type
-    const pair = await Pair.findById(pairId).select('networks chainType').lean();
+    const pair = await Pair.findById(pairId).lean();
 
     if (!pair) {
         throw createError({
@@ -22,6 +22,10 @@ export default defineEventHandler(async (event) => {
             statusMessage: 'Pair not found'
         });
     }
+
+    const { totals } = await getTotalBalanceForPair(accountId, pair.baseAsset)
+
+    const Wallet = getModel('Wallet');
 
     // Get the appropriate wallet for this pair's chain type
     const wallet = await Wallet.findOne({
@@ -37,6 +41,8 @@ export default defineEventHandler(async (event) => {
             statusMessage: 'Wallet not found for this chain type'
         });
     }
+
+    const Network = getModel('Network');
 
     // Get network info for each network
     const networkDocs = await Network.find({
@@ -56,5 +62,17 @@ export default defineEventHandler(async (event) => {
         logoUrl: networkMap[network] || null
     }));
 
-    return { networks };
+
+    return {
+        ...totals,
+        balanceUsd:(parseFloat(totals.available) * pair.valueUsd).toFixed(2),
+        pair: {
+            _id: pair._id,
+            name: pair.name,
+            baseAsset: pair.baseAsset,
+            symbol: pair.symbol,
+            logoUrl: pair.logoUrl
+        },
+        networks
+    };
 });

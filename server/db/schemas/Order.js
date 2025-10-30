@@ -57,11 +57,11 @@ const orderSchema = new Schema({
       required: true
     }
   },
-  openingPrice: {
+  purchasePrice: {
     type: Number,
     required: true
   },
-  closingPrice: {
+  deliveryPrice: {
     type: Number
   },
   maxPrice: {
@@ -74,11 +74,11 @@ const orderSchema = new Schema({
     type: Date,
     default: null
   },
-  openedAt: {
+  purchasedAt: {
     type: Date,
     required: true
   },
-  closedAt: {
+  deliveredAt: {
     type: Date
   },
   pnL: {
@@ -115,8 +115,8 @@ const orderSchema = new Schema({
 
 // Indexes for performance
 orderSchema.index({ tradingAccount: 1, status: 1 });
-orderSchema.index({ tradingAccount: 1, closedAt: -1 });
-orderSchema.index({ status: 1, openedAt: 1 });
+orderSchema.index({ tradingAccount: 1, deliveredAt: -1 });
+orderSchema.index({ status: 1, purchasedAt: 1 });
 
 /**
  * Virtual for position size
@@ -145,8 +145,8 @@ orderSchema.virtual('floatingPnL').get(async function () {
     if (!pair) return 0;
 
     const currentPrice = pair.valueUsd;
-    const priceDiff = currentPrice - this.openingPrice;
-    const priceChangePercent = (priceDiff / this.openingPrice) * 100;
+    const priceDiff = currentPrice - this.purchasePrice;
+    const priceChangePercent = (priceDiff / this.purchasePrice) * 100;
 
     let floatingPnL = 0;
 

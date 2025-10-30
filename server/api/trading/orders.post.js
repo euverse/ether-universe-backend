@@ -80,13 +80,13 @@ export default defineEventHandler(async (event) => {
       type,
       amountUsdt: amount,
       fee,
-      entryPrice: order.openingPrice,
+      entryPrice: order.purchasePrice,
       leverage: tradingAccount.leverage,
       positionSize,
       status: order.status,
       deliveryTime: order.deliveryTime,
       closesAt: closeAt,
-      createdAt: order.openedAt
+      createdAt: order.purchasedAt
     };
   } catch (error) {
     console.error(error)

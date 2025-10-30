@@ -136,16 +136,10 @@ export async function approveUserWithdrawal(withdrawalId, adminId) {
       network
     );
 
-    const PREFERRED_NETWORKS = {
-      ETH: NETWORKS.POLYGON,
-      USDT: NETWORKS.POLYGON,
-      BTC: NETWORKS.BITCOIN,
-    }
-
     // Step 3: Initiate blockchain transaction
     const txResult = await executeBlockchainWithdrawal({
       pair,
-      network: PREFERRED_NETWORKS[pair.baseAsset],
+      network: withdrawal.network,
       amount: requestedAmount,
       recipientAddress
     });
@@ -289,6 +283,16 @@ export async function createAdminWithdrawal({
   }
 }
 
+const rpcUrls = useRuntimeConfig().rpcUrls;
+
+// RPC endpoints
+const RPC_ENDPOINTS = {
+  [NETWORKS.ETHEREUM]: rpcUrls.ethereum,
+  [NETWORKS.POLYGON]: rpcUrls.polygon,
+  [NETWORKS.BITCOIN]: rpcUrls.btc
+};
+
+
 // EXECUTE BLOCKCHAIN WITHDRAWAL
 
 /**
@@ -309,15 +313,13 @@ async function executeBlockchainWithdrawal({
       network,
       amount,
       recipientAddress,
-      isAdminWithdrawal
     });
   } else if (chainType === CHAIN_TYPES.BITCOIN) {
     return await executeBtcWithdrawal({
       pair,
       network,
       amount,
-      recipientAddress,
-      isAdminWithdrawal
+      recipientAddress
     });
   } else {
     throw new Error(`Unsupported chain type: ${chainType}`);
@@ -329,22 +331,36 @@ async function executeEvmWithdrawal({
   pair,
   network,
   amount,
-  recipientAddress,
-  isAdminWithdrawal
+  recipientAddress
 }) {
   // Get admin wallet for this network
   const adminWallet = await AdminWallet.findOne({
-    network,
+    chainType: CHAIN_TYPES.EVM,
     isActive: true
   });
 
   if (!adminWallet) {
-    throw new Error(`No active admin wallet found for network: ${network}`);
+    throw new Error(`No active admin wallet found for evm`);
+  }
+
+  /**
+ * Get provider for network
+ */
+  function getProvider(network) {
+    const rpcUrl = RPC_ENDPOINTS[network];
+    if (!rpcUrl) {
+      throw new Error(`No RPC endpoint configured for network: ${network}`);
+    }
+    return createProvider(rpcUrl);
   }
 
   // Setup provider and signer
-  const provider = new ethers.JsonRpcProvider(RPC_ENDPOINTS[network]);
-  const wallet = new ethers.Wallet(adminWallet.privateKey, provider);
+  const provider = getProvider(network);
+  const adminSigner = createSignerFromMnemonic(
+    process.env.MASTER_MNEMONIC,
+    adminWallet.derivationPath,
+    provider
+  );
 
   // Convert amount to smallest unit
   const amountSmallest = toSmallestUnit(amount, pair.decimals);
@@ -352,7 +368,7 @@ async function executeEvmWithdrawal({
   // Prepare transfer params
   const transferParams = {
     provider,
-    signer: wallet,
+    signer: adminSigner,
     toAddress: recipientAddress,
     amount: amountSmallest
   };
@@ -376,20 +392,17 @@ async function executeEvmWithdrawal({
 
 // EXECUTE BTC WITHDRAWAL
 async function executeBtcWithdrawal({
-  pair,
-  network,
   amount,
-  recipientAddress,
-  isAdminWithdrawal
+  recipientAddress
 }) {
   // Get admin wallet for this network
   const adminWallet = await AdminWallet.findOne({
-    network,
+    chainType: CHAIN_TYPES.BTC,
     isActive: true
   });
 
   if (!adminWallet) {
-    throw new Error(`No active admin wallet found for network: ${network}`);
+    throw new Error(`No active admin wallet found for Bitcoin`);
   }
 
   // Convert amount to satoshis
@@ -397,7 +410,7 @@ async function executeBtcWithdrawal({
 
   // Execute transfer
   const result = await btcTransfer({
-    apiUrl: getBitcoinApiUrl(network),
+    apiUrl: RPC_ENDPOINTS[NETWORKS.BITCOIN],
     fromAddress: adminWallet.address,
     toAddress: recipientAddress,
     mnemonic: adminWallet.mnemonic,

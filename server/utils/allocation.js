@@ -92,7 +92,7 @@ export async function createAllocation(userId, baseAsset, amount) {
 /**
  * Resolve trading account from either tradingAccountId or userId
  */
-async function resolveTradingAccount({ tradingAccountId, userId }) {
+export async function resolveTradingAccount({ tradingAccountId, userId }) {
     if (!tradingAccountId && !userId) {
         throw new Error('Either tradingAccountId or userId must be provided');
     }

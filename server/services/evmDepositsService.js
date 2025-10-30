@@ -250,6 +250,7 @@ export async function scanAllEVMWalletsForDeposits() {
         // Get all active EVM wallets
         const wallets = await Wallet.find({
             chainType: CHAIN_TYPES.EVM,
+            derivationPath: { $ne: null } //select only active wallets
         });
 
         // Get all active EVM pairs
