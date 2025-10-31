@@ -13,7 +13,6 @@ const agenda = new Agenda({
   maxConcurrency: 20
 });
 
-
 /**
  * Define the close order job
  * Runs when delivery time expires

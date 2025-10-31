@@ -47,7 +47,6 @@ export function generateEVMWallet(userIdOrIndex, isDemo = false) {
  * Generate BTC wallet
  */
 export function generateBTCWallet(userIdOrIndex, isDemo = false) {
-  console.log("+++++++++++++++++++++++++++GENERATED BTC WALLET+++++++++++++++++++++++++++++++++++")
   if (isDemo) {
     const keyPair = ECPair.makeRandom();
     const { address } = bitcoin.payments.p2pkh({
@@ -71,13 +70,6 @@ export function generateBTCWallet(userIdOrIndex, isDemo = false) {
     pubkey: child.publicKey,
     network: bitcoin.networks.bitcoin
   });
-
-  console.log(`+++++++++++++++++++++++++++{${{
-    isDemo,
-    chainType: CHAIN_TYPES.BTC,
-    address,
-    derivationPath: path
-  }}}+++++++++++++++++++++++++++++++++++`)
 
   return {
     chainType: CHAIN_TYPES.BTC,

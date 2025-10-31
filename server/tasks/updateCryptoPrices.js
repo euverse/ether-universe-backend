@@ -137,16 +137,11 @@ async function updateCryptoPrices() {
   }
 }
 
-export function initializePriceUpdateTask(agenda) {
-  agenda.define('update-crypto-prices', async (job) => {
-    await updateCryptoPrices();
-  });
+export async function initializePriceUpdateTask(agenda) {
 
-  agenda.every('5 seconds', 'update-crypto-prices');
-
+  await initializeRecurringJob(agenda, 'update-crypto-prices', updateCryptoPrices, '5 seconds')
   priceUpdateLogger.initialize({ frequency: '5 seconds' });
 
-  agenda.now('update-crypto-prices');
 }
 
 export { updateCryptoPrices };

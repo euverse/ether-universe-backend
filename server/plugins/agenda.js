@@ -5,7 +5,7 @@ import { initializePriceDataTasks } from '../tasks/updatePriceData.js';
 
 export default defineNitroPlugin(async () => {
     await startAgenda();
-    initializePriceUpdateTask(agenda)
-    initializeDepositScanTasks(agenda)
-    initializePriceDataTasks(agenda)
+    await initializePriceUpdateTask(agenda)
+    await initializeDepositScanTasks(agenda)
+    await initializePriceDataTasks(agenda)
 })

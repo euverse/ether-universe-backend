@@ -372,31 +372,24 @@ async function updateAllPairs() {
 }
 
 // Initialize agenda tasks
-export function initializePriceDataTasks(agenda) {
+export async function initializePriceDataTasks(agenda) {
     // Task 1: Initialize uninitialized records
-    agenda.define('initialize-price-data', async (job) => {
+    await initializeRecurringJob(agenda, 'initialize-price-data', async (job) => {
         await initializeUninitializedPriceData();
-    });
+    }, '10 minutes', { dontRun: true })
+    initializePriceDataLogger.initialize({ frequency: '10 minutes' })
+
 
     // Task 2: Update high-priority pairs frequently
-    agenda.define('update-high-priority-pairs', async (job) => {
+    await initializeRecurringJob(agenda, 'update-high-priority-pairs', async (job) => {
         await updateHighPriorityPairs();
-    });
+    }, '35 minutes', { dontRun: true })
+    updateHighPriorityPairsLogger.initialize({ frequency: '35 minutes' })
 
     // Task 3: Update all pairs less frequently
-    agenda.define('update-all-pairs', async (job) => {
+    await initializeRecurringJob(agenda, 'update-all-pairs', async (job) => {
         await updateAllPairs();
-    });
+    }, '2 hours')
 
-    // Schedule tasks
-    agenda.every('10 minutes', 'initialize-price-data');
-    agenda.every('35 minutes', 'update-high-priority-pairs');
-    agenda.every('2 hours', 'update-all-pairs');
-
-    initializePriceDataLogger.initialize({ frequency: '10 minutes' })
-    updateHighPriorityPairsLogger.initialize({ frequency: '35 minutes' })
     updateAllPairsLogger.initialize({ frequency: '2 hours' })
-
-    // Run initialization immediately
-    agenda.now('initialize-price-data');
 }

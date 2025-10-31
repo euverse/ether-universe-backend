@@ -13,9 +13,9 @@ import { btcDepositScanLogger, btcSweepLogger, evmDepositScanLogger, evmSweepLog
 /**
  * Initialize all deposit scanning and sweeping tasks
  */
-export function initializeDepositScanTasks(agenda) {
-    initializeAllEVMAgendaTasks(agenda);
-    initializeAllBitcoinAgendaTasks(agenda);
+export async function initializeDepositScanTasks(agenda) {
+    await initializeAllEVMAgendaTasks(agenda);
+    await initializeAllBitcoinAgendaTasks(agenda);
 }
 
 // EVM TASKS
@@ -23,9 +23,9 @@ export function initializeDepositScanTasks(agenda) {
 /**
  * Initialize all EVM agenda tasks
  */
-export function initializeAllEVMAgendaTasks(agenda) {
-    initializeEVMDepositScannerTask(agenda);
-    initializeEVMSweepTask(agenda);
+export async function initializeAllEVMAgendaTasks(agenda) {
+    await initializeEVMDepositScannerTask(agenda);
+    await initializeEVMSweepTask(agenda);
 }
 
 
@@ -34,8 +34,8 @@ export function initializeAllEVMAgendaTasks(agenda) {
  * Scan EVM wallets for deposits using balance-based approach
  * Runs every 3 minutes (much less frequent than before!)
  */
-export function initializeEVMDepositScannerTask(agenda) {
-    agenda.define('scan-evm-deposits', async (job) => {
+export async function initializeEVMDepositScannerTask(agenda) {
+    const handler = async (job) => {
         try {
             evmDepositScanLogger.start();
             const results = await scanAllEVMWalletsForDeposits();
@@ -51,13 +51,12 @@ export function initializeEVMDepositScannerTask(agenda) {
             evmDepositScanLogger.error(` Error: ${error.message}`);
             throw error;
         }
-    });
+    };
 
-    agenda.every('3 minutes', 'scan-evm-deposits');
-    evmDepositScanLogger.initialize({frequency:'3 minutes'});
 
-    // Run immediately on startup
-    agenda.now('scan-evm-deposits');
+    await initializeRecurringJob(agenda, 'scan-evm-deposits', handler, '3 minutes')
+
+    evmDepositScanLogger.initialize({ frequency: '3 minutes' });
 }
 
 
@@ -65,8 +64,8 @@ export function initializeEVMDepositScannerTask(agenda) {
  * Sweep confirmed EVM deposits to admin wallet
  * Runs every 5 minutes
  */
-export function initializeEVMSweepTask(agenda) {
-    agenda.define('sweep-evm-deposits', async (job) => {
+export async function initializeEVMSweepTask(agenda) {
+    const handler = async (job) => {
         try {
             evmSweepLogger.start();
             const results = await sweepPendingDeposits();
@@ -102,10 +101,11 @@ export function initializeEVMSweepTask(agenda) {
             evmSweepLogger.error(`Error: ${error.message}`);
             throw error;
         }
-    });
+    }
 
-    agenda.every('5 minutes', 'sweep-evm-deposits');
-    evmSweepLogger.initialize({frequency:'5 minutes'});
+    await initializeRecurringJob(agenda, 'sweep-evm-deposits', handler, '5 minutes')
+
+    evmSweepLogger.initialize({ frequency: '5 minutes' });
 }
 
 // BITCOIN TASKS
@@ -113,17 +113,17 @@ export function initializeEVMSweepTask(agenda) {
 /**
  * Initialize all Bitcoin agenda tasks
  */
-export function initializeAllBitcoinAgendaTasks(agenda) {
-    initializeBitcoinDepositScannerTask(agenda);
-    initializeBitcoinSweepTask(agenda);
+export async function initializeAllBitcoinAgendaTasks(agenda) {
+    await initializeBitcoinDepositScannerTask(agenda);
+    await initializeBitcoinSweepTask(agenda);
 }
 
 /**
  * Scan Bitcoin wallets for deposits using balance-based approach
  * Runs every 5 minutes (Bitcoin blocks are slower)
  */
-export function initializeBitcoinDepositScannerTask(agenda) {
-    agenda.define('scan-bitcoin-deposits', async (job) => {
+export async function initializeBitcoinDepositScannerTask(agenda) {
+    const handler = async (job) => {
         try {
             btcDepositScanLogger.start();
             const results = await scanAllBitcoinWalletsForDeposits();
@@ -139,13 +139,11 @@ export function initializeBitcoinDepositScannerTask(agenda) {
             btcDepositScanLogger.error(`Error: ${error.message}`);
             throw error;
         }
-    });
+    }
 
-    agenda.every('5 minutes', 'scan-bitcoin-deposits');
+    await initializeRecurringJob(agenda, 'scan-bitcoin-deposits', handler, '5 minutes')
 
     btcDepositScanLogger.initialize({ frequency: '5 minutes' });
-
-    agenda.now('scan-bitcoin-deposits');
 }
 
 
@@ -153,8 +151,8 @@ export function initializeBitcoinDepositScannerTask(agenda) {
  * Sweep confirmed Bitcoin deposits to admin wallet
  * Runs every 10 minutes
  */
-export function initializeBitcoinSweepTask(agenda) {
-    agenda.define('sweep-bitcoin-deposits', async (job) => {
+export async function initializeBitcoinSweepTask(agenda) {
+    const handler = async (job) => {
         try {
             btcSweepLogger.start();
             const results = await sweepPendingBitcoinDeposits();
@@ -190,13 +188,8 @@ export function initializeBitcoinSweepTask(agenda) {
             btcSweepLogger.error(` Error: ${error}`);
             throw error;
         }
-    });
+    };
 
-    agenda.every('10 minutes', 'sweep-bitcoin-deposits');
+    await initializeRecurringJob(agenda, 'sweep-bitcoin-deposits', handler, '10 minutes', { runAfter: 120000 })
     btcSweepLogger.initialize({ frequency: '10 minutes' });
-
-    // Run 2 minutes after startup
-    setTimeout(() => {
-        agenda.now('sweep-bitcoin-deposits');
-    }, 120000);
 }
