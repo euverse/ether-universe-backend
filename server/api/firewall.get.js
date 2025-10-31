@@ -19,7 +19,11 @@ export default defineEventHandler(async event => {
         }
     }
 
-    const ipData = await event.$fetch("/api/ip")
+    const ipData = await event.$fetch("/api/ip", {
+        query: {
+            ip: requestIp
+        }
+    })
 
     const whiteListedCountryCodes = ["US"]
 
