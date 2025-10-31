@@ -120,8 +120,6 @@ async function updateCryptoPrices() {
       }
     }
 
-    priceUpdateLogger.log(JSON.stringify({bulkOps}))
-
     if (bulkOps.length > 0) {
       const result = await Pair.bulkWrite(bulkOps, { ordered: false });
       priceUpdateLogger.success(`Updated ${result.modifiedCount} out of ${pairs.length} pairs`);
@@ -141,7 +139,12 @@ async function updateCryptoPrices() {
 
 export async function initializePriceUpdateTask(agenda) {
 
-  await initializeRecurringJob(agenda, 'update-crypto-prices', updateCryptoPrices, '5 seconds')
+  await initializeRecurringJob(agenda, 'update-crypto-prices', updateCryptoPrices, '5 seconds', {
+    jobOptions: {
+      lockLifetime: 60000
+    }
+  })
+
   priceUpdateLogger.initialize({ frequency: '5 seconds' });
 
 }
