@@ -142,9 +142,9 @@ export function initializePriceUpdateTask(agenda) {
     await updateCryptoPrices();
   });
 
-  agenda.every('10 seconds', 'update-crypto-prices');
+  agenda.every('5 seconds', 'update-crypto-prices');
 
-  priceUpdateLogger.initialize({ frequency: '10 seconds' });
+  priceUpdateLogger.initialize({ frequency: '5 seconds' });
 
   agenda.now('update-crypto-prices');
 }

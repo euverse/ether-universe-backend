@@ -23,7 +23,19 @@ export default defineEventHandler(async (event) => {
         });
     }
 
-    const { totals } = await getTotalBalanceForPair(accountId, pair.baseAsset)
+    let totals;
+
+    if (pair.baseAsset === "USDT") {
+        //include allocated usdt
+        const { totals: usdtTotals } = await getTradingAccountUSDTBalance(accountId)
+
+        totals = usdtTotals;
+
+    } else {
+        const { totals: pairTotals } = await getTotalBalanceForPair(accountId, pair.baseAsset)
+
+        totals = pairTotals;
+    }
 
     const Wallet = getModel('Wallet');
 
@@ -65,7 +77,7 @@ export default defineEventHandler(async (event) => {
 
     return {
         ...totals,
-        balanceUsd:(parseFloat(totals.available) * pair.valueUsd).toFixed(2),
+        balanceUsd: (parseFloat(totals.available) * pair.valueUsd).toFixed(2),
         pair: {
             _id: pair._id,
             name: pair.name,

@@ -71,7 +71,6 @@ async function createWallets(accountId, userId, isDemo) {
     const evmWallet = await Wallet.create({
         tradingAccount: accountId,
         ...evmData,
-        lastScannedBlock: {}
     });
     wallets.push(evmWallet);
 
@@ -80,7 +79,6 @@ async function createWallets(accountId, userId, isDemo) {
     const btcWallet = await Wallet.create({
         tradingAccount: accountId,
         ...btcData,
-        lastScannedBlock: {}
     });
     wallets.push(btcWallet);
 

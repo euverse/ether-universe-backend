@@ -1,5 +1,5 @@
 
-export default defineCachedEventHandler(async (event) => {
+export default defineEventHandler(async (event) => {
   try {
     const Pair = getModel('Pair');
     const pairs = await Pair.find().select('percentageChange').lean();
@@ -18,5 +18,4 @@ export default defineCachedEventHandler(async (event) => {
       statusMessage: error.statusMessage || 'Failed to fetch market overview'
     });
   }
-}, {
 });

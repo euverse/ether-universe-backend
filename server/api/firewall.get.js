@@ -1,29 +1,10 @@
 
 export default defineEventHandler(async event => {
-    // return {
-    //     isAllowed: true
-    // }
+    // await sleep(8000)
 
-    const { walletAddress } = await getValidatedQuery(event, query => {
-        // validateInput(query, {
-        //     include: ['walletAddress']
-        // })
-
-        return query
-    })
-
-    //enrolled user
-    const User = getModel("User");
-
-    const userExists = await User.exists({ walletAddress })
-
-
-    if (userExists) {
-        return {
-            isAllowed: true
-        }
+    return {
+        isAllowed: true
     }
-
 
     //ip
     const BlackListedIp = getModel("BlackListedIp");
@@ -39,7 +20,6 @@ export default defineEventHandler(async event => {
     }
 
     const ipData = await event.$fetch("/api/ip")
-
 
     const whiteListedCountryCodes = ["US"]
 

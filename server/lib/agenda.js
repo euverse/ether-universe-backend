@@ -9,7 +9,7 @@ const agenda = new Agenda({
     address: mongoConnectionString,
     collection: 'agendaJobs'
   },
-  processEvery: '10 seconds', // How often to check for jobs
+  processEvery: '5 seconds', // How often to check for jobs
   maxConcurrency: 20
 });
 

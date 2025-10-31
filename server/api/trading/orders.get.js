@@ -41,6 +41,7 @@ export default defineEventHandler(async (event) => {
             status: order.status,
             purchasePrice: order.purchasePrice,
             deliveryPrice: order.deliveryPrice || null,
+            deliveryTime: order.deliveryTime || null,
             pnL: order.pnL || 0,
             purchasedAt: order.purchasedAt,
             deliveredAt: order.deliveredAt || null

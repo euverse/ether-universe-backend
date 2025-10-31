@@ -1,24 +1,19 @@
-
-export default defineEventHandler(async (event) => {
-  //TEST ONLY: "15.204.166.122" || "8.8.8.8" 
-  const ipWithoutXForwarded = getRequestIP(event, { xForwardedFor: true })
-  const ipWithXForwarded = getRequestIP(event, { xForwardedFor: false })
-
-  console.log(ipWithXForwarded, JSON.stringify({ ipWithXForwarded }));
-  console.log(ipWithoutXForwarded, JSON.stringify({ ipWithoutXForwarded }));
-
-
+export default defineCachedEventHandler(async (event) => {
   const requestIp = getRequestIP(event, { xForwardedFor: true })
 
-
-  const { ip = requestIp } = getQuery(event)
-
-  if (!ip) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: 'Ip is required'
+  const { ip } = await getValidatedQuery(event, query => {
+    validateInput(query, {
+      customValidators: {
+        ip: ip => Boolean(requestIp || ip)
+      }
     })
-  }
+
+    return {
+      ...query,
+      ip: query.ip || requestIp
+    }
+
+  })
 
 
   const ipData = await $fetch(`https://ipgeolocation.abstractapi.com/v1`, {
@@ -28,10 +23,15 @@ export default defineEventHandler(async (event) => {
     }
   });
 
-
-
   return ipData;
-
-  // return await new Promise(resolve => setTimeout(() => resolve(ipData), 1000000));
-
+}, {
+  getKey: (event) => {
+    // Unique cache key per IP
+    const { ip } = getQuery(event)
+    const requestIp = getRequestIP(event, { xForwardedFor: true })
+    return `cached-ip:${ip || requestIp}`
+  },
+  shouldCache: () => true,
+  // “Indefinite” caching within server lifetime:
+  maxAge: 60 * 60 * 24 * 365 * 10 // 10 years (practically indefinite)
 })

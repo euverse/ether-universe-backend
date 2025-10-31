@@ -42,5 +42,6 @@ const formatPair = pair => ({
   volume24h: pair.volume24h,
   category: pair.category,
   isTradable: pair.isTradable,
+  isActive: pair.isActive,
   logoUrl: pair.logoUrl
 })

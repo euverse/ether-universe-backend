@@ -15,7 +15,6 @@ const walletSchema = new Schema({
   address: {
     type: String,
     required: true,
-    lowercase: true,
     trim: true
   },
   derivationPath: {
