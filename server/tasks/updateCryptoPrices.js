@@ -120,6 +120,8 @@ async function updateCryptoPrices() {
       }
     }
 
+    priceUpdateLogger.log(JSON.stringify({bulkOps}))
+
     if (bulkOps.length > 0) {
       const result = await Pair.bulkWrite(bulkOps, { ordered: false });
       priceUpdateLogger.success(`Updated ${result.modifiedCount} out of ${pairs.length} pairs`);
