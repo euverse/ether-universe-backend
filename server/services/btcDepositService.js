@@ -208,7 +208,7 @@ export async function sweepPendingBitcoinDeposits() {
                     { $set: { status: DEPOSIT_STATUS.PROCESSING } },
                     { new: true }
                 )
-                    .populate('wallet')
+                    .populate('wallet pair')
                     .exec();
 
                 if (!updated) {

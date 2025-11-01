@@ -475,19 +475,6 @@ export async function placeOrder({
     );
 
     try {
-        console.log(JSON.stringify({
-            tradingAccountId,
-            pairId,
-            orderType,
-            amountUsdt, // human-readable
-            leverage,
-            deliveryTime,
-            purchasePrice,
-            fee, // human-readable
-            purchasedAt,
-            deliverAt
-        }))
-
         // Create order
         const order = await Order.create({
             tradingAccount: tradingAccountId,

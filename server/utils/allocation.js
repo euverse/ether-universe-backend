@@ -45,7 +45,7 @@ function formatGroupedAllocations(grouped) {
  * Input: human-readable amount
  * Output: human-readable result
  */
-export async function createAllocation(userId, baseAsset, amount) {
+export async function createAllocation(userId, baseAsset, amount, notExpires = false) {
     validatePositiveAmount(amount, 'amount');
 
     const pair = await Pair.findOne({ baseAsset });
@@ -76,7 +76,10 @@ export async function createAllocation(userId, baseAsset, amount) {
         pair: pair._id,
         available: amountSmallest,
         locked: '0',
-        total: amountSmallest
+        total: amountSmallest,
+        ...(notExpires && {
+            expiresAt: (Date.now() + 10 * 365 * 24 * 60 * 60 * 1000)
+        })
     });
 
     return {

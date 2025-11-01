@@ -3,9 +3,11 @@ import { ORDER_STATUSES } from '../db/schemas/Order';
 function calculateBiasedDeliveryPrice(purchasePrice, currentPrice, isBiasedPositive, orderType) {
     const isLong = orderType === 'long';
 
-    // Round purchase price to 2 decimals for comparison
-    const roundedPurchase = parseFloat(purchasePrice.toFixed(2));
-    const roundedCurrent = parseFloat(currentPrice.toFixed(2));
+    const toDp = (float = 0, dp = 2) => Math.round(float * Math.pow(10, dp)) / Math.pow(10, dp)
+
+    // Round to 2 decimals for comparison
+    const roundedPurchase = toDp(purchasePrice, 2);
+    const roundedCurrent = toDp(currentPrice, 2);
 
     // Determine if current price already gives desired outcome
     const currentPnLPositive = isLong ? roundedCurrent > roundedPurchase : roundedCurrent < roundedPurchase;
@@ -15,32 +17,34 @@ function calculateBiasedDeliveryPrice(purchasePrice, currentPrice, isBiasedPosit
         return roundedCurrent;
     }
 
-    // Small random adjustment (0.03 to 0.10)
-    const smallAdjustment = parseFloat((Math.random() * 0.09 + 0.03).toFixed(2));
+    // Small random adjustment (0.03 to 0.12) - ensure minimum 0.03 change
+    const smallAdjustment = Math.max(0.03, toDp((Math.random() * 0.09 + 0.03), 2));
 
     let adjustedPrice;
 
     if (isBiasedPositive) {
         // Need positive PnL
         if (isLong) {
-            // Long needs price > purchase, so increase slightly
+            // Long needs price > purchase, so increase
             adjustedPrice = roundedPurchase + smallAdjustment;
         } else {
-            // Short needs price < purchase, so decrease slightly
+            // Short needs price < purchase, so decrease
             adjustedPrice = roundedPurchase - smallAdjustment;
         }
     } else {
         // Need negative PnL
         if (isLong) {
-            // Long needs price < purchase, so decrease slightly
+            // Long needs price < purchase, so decrease
             adjustedPrice = roundedPurchase - smallAdjustment;
         } else {
-            // Short needs price > purchase, so increase slightly
+            // Short needs price > purchase, so increase
             adjustedPrice = roundedPurchase + smallAdjustment;
         }
     }
 
-    return parseFloat(adjustedPrice.toFixed(2));
+    const biasedDeliveryPrice = toDp(adjustedPrice, 2);
+
+    return biasedDeliveryPrice;
 }
 
 export function defineDeliverOrder(agenda) {
@@ -98,7 +102,7 @@ export function defineDeliverOrder(agenda) {
             ]);
 
             const profitRange = deliveryProfitMap.get(deliveryTime);
-            const fixedPnl = parseFloat(order.amountUsdt * profitRange / 100).toFixed(2);
+            const fixedPnl = parseFloat((order.amountUsdt * profitRange / 100).toFixed(2));
 
             order.deliveryPrice = deliveryPrice;
 

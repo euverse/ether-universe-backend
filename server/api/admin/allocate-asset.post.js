@@ -1,6 +1,6 @@
 
 export default defineEventHandler(async (event) => {
-    const { userId, amount, baseAsset } = await readAndValidateBody(event, {
+    const { userId, amount, baseAsset, expires = true } = await readAndValidateBody(event, {
         include: ['userId', 'amount', 'baseAsset'],
         customValidators: {
             amount: amount => amount > 0
@@ -11,7 +11,8 @@ export default defineEventHandler(async (event) => {
         await createAllocation(
             userId,
             baseAsset,
-            amount
+            amount,
+            !expires
         );
 
         return {
