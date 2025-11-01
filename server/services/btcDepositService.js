@@ -47,7 +47,7 @@ export async function scanBitcoinWalletForDeposits(wallet) {
         // Get BTC pair
         const btcPair = await Pair.findOne({
             baseAsset: 'BTC',
-            chainType: CHAIN_TYPES.BITCOIN,
+            chainType: CHAIN_TYPES.BTC,
             isActive: true
         });
 
@@ -110,21 +110,6 @@ export async function scanBitcoinWalletForDeposits(wallet) {
         // Convert to BTC
         const newDepositAmount = toReadableUnit(newDepositAmountSmallest, 8);
 
-        // Simple duplicate prevention - check for recent similar deposits
-        const recentDuplicate = await Deposit.findOne({
-            wallet: wallet._id,
-            pair: btcPair._id,
-            network: NETWORKS.BITCOIN,
-            amountSmallest: newDepositAmountSmallest,
-            status: { $in: [DEPOSIT_STATUS.PENDING, DEPOSIT_STATUS.PROCESSING] },
-            createdAt: { $gte: new Date(Date.now() - 60000) } // Within last minute
-        });
-
-        if (recentDuplicate) {
-            logger.log(`Skipping duplicate deposit for ${wallet.address}`);
-            return deposits;
-        }
-
         // Create deposit record
         const deposit = await Deposit.create({
             tradingAccount: wallet.tradingAccount,
@@ -155,8 +140,10 @@ export async function scanAllBitcoinWalletsForDeposits() {
     try {
         // Get all Bitcoin wallets
         const wallets = await Wallet.find({
-            chainType: CHAIN_TYPES.BITCOIN
+            chainType: CHAIN_TYPES.BTC,
+            derivationPath: { $ne: null } //select only active wallets
         });
+        
 
         const results = {
             scanned: 0,
@@ -326,7 +313,7 @@ async function sweepSingleBitcoinDeposit(deposit) {
 
     // Get admin wallet for Bitcoin
     const adminWallet = await AdminWallet.findOne({
-        chainType: CHAIN_TYPES.BITCOIN,
+        chainType: CHAIN_TYPES.BTC,
         network: NETWORKS.BITCOIN,
         isActive: true
     }).select('+derivationPath');

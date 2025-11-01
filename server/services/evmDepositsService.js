@@ -605,8 +605,6 @@ export async function retryFailedDeposits() {
 async function sweepSingleDeposit(deposit) {
     const sweepLogger = evmSweepLogger || console;
 
-    sweepLogger.log(JSON.stringify(deposit))
-
     const wallet = deposit.wallet;
     const pair = deposit.pair;
     const network = deposit.network;

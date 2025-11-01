@@ -313,7 +313,7 @@ async function executeBlockchainWithdrawal({
       amount,
       recipientAddress,
     });
-  } else if (chainType === CHAIN_TYPES.BITCOIN) {
+  } else if (chainType === CHAIN_TYPES.BTC) {
     return await executeBtcWithdrawal({
       pair,
       network,
@@ -506,7 +506,7 @@ function getChainType(network) {
   const networkConfig = {
     [NETWORKS.ETHEREUM]: CHAIN_TYPES.EVM,
     [NETWORKS.POLYGON]: CHAIN_TYPES.EVM,
-    [NETWORKS.BITCOIN]: CHAIN_TYPES.BITCOIN,
+    [NETWORKS.BITCOIN]: CHAIN_TYPES.BTC,
     // Add more networks as needed
   };
 
