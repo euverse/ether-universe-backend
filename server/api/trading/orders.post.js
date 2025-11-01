@@ -52,23 +52,27 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    // Use placeOrder utility (handles locking and order creation)
-    const { order } = await placeOrder(
-      tradingAccount._id,
-      pairId,
-      type,
-      amount.toString(),
-      tradingAccount.leverage,
-      parseDeliveryTime(deliveryTime),
-      pair.valueUsd,
-      fee.toString()
-    );
-
     // Schedule order closure
-    const closeAtMs = calculateCloseTime(deliveryTime);
-    const closeAt = new Date(Date.now() + closeAtMs);
+    const purchasedAt = Date.now()
+    const deliverAtMs = calculateCloseTime(deliveryTime);
+    const deliverAt = new Date(purchasedAt + deliverAtMs);
 
-    await agenda.schedule(closeAt, 'close order', {
+    // Use placeOrder utility (handles locking and order creation)
+    const { order } = await placeOrder({
+      tradingAccountId: tradingAccount._id,
+      pairId,
+      orderType:type,
+      amountUsdt: amount.toString(),
+      leverage: tradingAccount.leverage,
+      deliveryTime: parseDeliveryTime(deliveryTime),
+      purchasePrice: pair.valueUsd,
+      fee: fee.toString(),
+      purchasedAt,
+      deliverAt
+    });
+
+
+    await agenda.schedule(deliverAt, 'deliver order', {
       orderId: order._id.toString()
     });
 
@@ -85,8 +89,7 @@ export default defineEventHandler(async (event) => {
       positionSize,
       status: order.status,
       deliveryTime: order.deliveryTime,
-      closesAt: closeAt,
-      createdAt: order.purchasedAt
+      purchasedAt: order.purchasedAt
     };
   } catch (error) {
     console.error(error)
@@ -97,13 +100,14 @@ export default defineEventHandler(async (event) => {
   }
 });
 
-function parseDeliveryTime(str) {
-  const match = /^(\d+)([sh])$/.exec(str);
-  if (!match) throw new Error('Invalid delivery time format. Use format: 1h or 30s');
+function parseDeliveryTime(str = "") {
+  const [value, units] = str.trim().split("_")
+  
+  if (!value || !units ) throw new Error('Invalid delivery time format. Use format: 1h or 30s');
 
   return {
-    value: parseInt(match[1]),
-    units: match[2]
+    value: parseInt(value.trim()),
+    units: units.trim().toLowerCase()
   };
 }
 

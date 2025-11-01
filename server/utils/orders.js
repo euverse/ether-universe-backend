@@ -337,116 +337,116 @@ export async function distributePnL(
  * Unlocks funds and distributes PnL
  */
 export async function settleOrder(
-  tradingAccountId,
-  baseAsset,
-  lockedBalanceDistributions,
-  lockedAllocationDistributions,
-  profitOrLoss, // human-readable
-  isProfit
-) {
-  // Step 1: Unlock original amounts
-  const unlockResult = await unlockUSDT({
-    allocations: lockedAllocationDistributions,
-    balances: lockedBalanceDistributions
-  });
-
-  // Step 2: Distribute PnL if any
-  let pnLResult = null;
-  
-  if (profitOrLoss !== 0) {
-    const hasBalanceLocks = lockedBalanceDistributions && lockedBalanceDistributions.length > 0;
-    const hasAllocationLocks = lockedAllocationDistributions && lockedAllocationDistributions.length > 0;
-
-    if (isProfit) {
-      // PROFIT scenarios
-      if (hasBalanceLocks && hasAllocationLocks) {
-        // Both locks -> distributePnL (only to balances for profit)
-        pnLResult = await distributePnL(
-          baseAsset,
-          lockedBalanceDistributions,
-          profitOrLoss,
-          isProfit
-        );
-      } else if (hasBalanceLocks) {
-        // Balance locks only -> distributePnL
-        pnLResult = await distributePnL(
-          baseAsset,
-          lockedBalanceDistributions,
-          profitOrLoss,
-          isProfit
-        );
-      } else {
-        // Allocation locks only -> addPnL
-        pnLResult = await addPnL(
-          tradingAccountId,
-          baseAsset,
-          profitOrLoss
-        );
-      }
-    } else {
-      // LOSS scenarios
-      if (hasBalanceLocks && hasAllocationLocks) {
-        // Both locks -> determine loss distribution from locks proportionally
-        const totalBalanceLocked = lockedBalanceDistributions.reduce(
-          (sum, d) => add(sum, d.amount), 
-          '0'
-        );
-        const totalAllocationLocked = lockedAllocationDistributions.reduce(
-          (sum, d) => add(sum, d.amount), 
-          '0'
-        );
-        const totalLocked = add(totalBalanceLocked, totalAllocationLocked);
-
-        // Calculate proportional losses
-        const balanceProportion = calculateProportion(totalBalanceLocked, totalLocked);
-        const allocationProportion = calculateProportion(totalAllocationLocked, totalLocked);
-        
-        const balanceLoss = multiply(profitOrLoss.toString(), balanceProportion);
-        const allocationLoss = multiply(profitOrLoss.toString(), allocationProportion);
-
-        // Distribute to both
-        const balanceResult = await distributePnL(
-          baseAsset,
-          lockedBalanceDistributions,
-          parseFloat(balanceLoss),
-          false
-        );
-        
-        const allocationResult = await distributeLoss(
-          baseAsset,
-          lockedAllocationDistributions,
-          parseFloat(allocationLoss)
-        );
-
-        pnLResult = {
-          totalDistributed: profitOrLoss,
-          balanceLoss: balanceResult.totalDistributed,
-          allocationLoss: allocationResult.totalDistributed
-        };
-      } else if (hasBalanceLocks) {
-        // Balance locks only -> distributePnL
-        pnLResult = await distributePnL(
-          baseAsset,
-          lockedBalanceDistributions,
-          profitOrLoss,
-          isProfit
-        );
-      } else if (hasAllocationLocks) {
-        // Allocation locks only -> distributeLoss
-        pnLResult = await distributeLoss(
-          baseAsset,
-          lockedAllocationDistributions,
-          profitOrLoss
-        );
-      }
-    }
-  }
-
-  return {
-    totalUnlocked: unlockResult.totalUnlocked,
-    totalPnL: pnLResult?.totalDistributed || pnLResult?.amount || '0',
+    tradingAccountId,
+    baseAsset,
+    lockedBalanceDistributions,
+    lockedAllocationDistributions,
+    profitOrLoss, // human-readable
     isProfit
-  };
+) {
+    // Step 1: Unlock original amounts
+    const unlockResult = await unlockUSDT({
+        allocations: lockedAllocationDistributions,
+        balances: lockedBalanceDistributions
+    });
+
+    // Step 2: Distribute PnL if any
+    let pnLResult = null;
+
+    if (profitOrLoss !== 0) {
+        const hasBalanceLocks = lockedBalanceDistributions && lockedBalanceDistributions.length > 0;
+        const hasAllocationLocks = lockedAllocationDistributions && lockedAllocationDistributions.length > 0;
+
+        if (isProfit) {
+            // PROFIT scenarios
+            if (hasBalanceLocks && hasAllocationLocks) {
+                // Both locks -> distributePnL (only to balances for profit)
+                pnLResult = await distributePnL(
+                    baseAsset,
+                    lockedBalanceDistributions,
+                    profitOrLoss,
+                    isProfit
+                );
+            } else if (hasBalanceLocks) {
+                // Balance locks only -> distributePnL
+                pnLResult = await distributePnL(
+                    baseAsset,
+                    lockedBalanceDistributions,
+                    profitOrLoss,
+                    isProfit
+                );
+            } else {
+                // Allocation locks only -> addPnL
+                pnLResult = await addPnL(
+                    tradingAccountId,
+                    baseAsset,
+                    profitOrLoss
+                );
+            }
+        } else {
+            // LOSS scenarios
+            if (hasBalanceLocks && hasAllocationLocks) {
+                // Both locks -> determine loss distribution from locks proportionally
+                const totalBalanceLocked = lockedBalanceDistributions.reduce(
+                    (sum, d) => add(sum, d.amount),
+                    '0'
+                );
+                const totalAllocationLocked = lockedAllocationDistributions.reduce(
+                    (sum, d) => add(sum, d.amount),
+                    '0'
+                );
+                const totalLocked = add(totalBalanceLocked, totalAllocationLocked);
+
+                // Calculate proportional losses
+                const balanceProportion = calculateProportion(totalBalanceLocked, totalLocked);
+                const allocationProportion = calculateProportion(totalAllocationLocked, totalLocked);
+
+                const balanceLoss = multiply(profitOrLoss.toString(), balanceProportion);
+                const allocationLoss = multiply(profitOrLoss.toString(), allocationProportion);
+
+                // Distribute to both
+                const balanceResult = await distributePnL(
+                    baseAsset,
+                    lockedBalanceDistributions,
+                    parseFloat(balanceLoss),
+                    false
+                );
+
+                const allocationResult = await distributeLoss(
+                    baseAsset,
+                    lockedAllocationDistributions,
+                    parseFloat(allocationLoss)
+                );
+
+                pnLResult = {
+                    totalDistributed: profitOrLoss,
+                    balanceLoss: balanceResult.totalDistributed,
+                    allocationLoss: allocationResult.totalDistributed
+                };
+            } else if (hasBalanceLocks) {
+                // Balance locks only -> distributePnL
+                pnLResult = await distributePnL(
+                    baseAsset,
+                    lockedBalanceDistributions,
+                    profitOrLoss,
+                    isProfit
+                );
+            } else if (hasAllocationLocks) {
+                // Allocation locks only -> distributeLoss
+                pnLResult = await distributeLoss(
+                    baseAsset,
+                    lockedAllocationDistributions,
+                    profitOrLoss
+                );
+            }
+        }
+    }
+
+    return {
+        totalUnlocked: unlockResult.totalUnlocked,
+        totalPnL: pnLResult?.totalDistributed || pnLResult?.amount || '0',
+        isProfit
+    };
 }
 
 // ORDER MANAGEMENT FUNCTIONS
@@ -455,16 +455,18 @@ export async function settleOrder(
  * Place a new order
  * Input: human-readable amounts, Output: human-readable result
  */
-export async function placeOrder(
+export async function placeOrder({
     tradingAccountId,
     pairId,
     orderType,
     amountUsdt, // human-readable
     leverage,
     deliveryTime,
-    entryPrice,
-    fee // human-readable
-) {
+    purchasePrice,
+    fee, // human-readable
+    purchasedAt,
+    deliverAt
+}) {
     // Lock balance for this order (amount + fee) - prioritizes allocations first
     const totalCost = parseFloat(amountUsdt) + parseFloat(fee);
     const locked = await lockUSDT(
@@ -473,6 +475,19 @@ export async function placeOrder(
     );
 
     try {
+        console.log(JSON.stringify({
+            tradingAccountId,
+            pairId,
+            orderType,
+            amountUsdt, // human-readable
+            leverage,
+            deliveryTime,
+            purchasePrice,
+            fee, // human-readable
+            purchasedAt,
+            deliverAt
+        }))
+
         // Create order
         const order = await Order.create({
             tradingAccount: tradingAccountId,
@@ -482,10 +497,11 @@ export async function placeOrder(
             leverage: parseFloat(leverage),
             status: ORDER_STATUSES.OPEN,
             deliveryTime,
-            purchasePrice: parseFloat(entryPrice),
-            maxPrice: parseFloat(entryPrice),
-            minPrice: parseFloat(entryPrice),
-            purchasedAt: new Date(),
+            purchasePrice: parseFloat(purchasePrice),
+            maxPrice: parseFloat(purchasePrice),
+            minPrice: parseFloat(purchasePrice),
+            purchasedAt,
+            deliveredAt: deliverAt, //set manually to avoid close order delays
             pnL: 0,
             fee: parseFloat(fee),
             lockedBalanceDistributions: locked.distributions.balances, // Stored in smallest units
@@ -560,7 +576,6 @@ export async function closeOrder(orderId, profitLossAmount) {
     // Update order
     order.status = ORDER_STATUSES.CLOSED;
     order.pnL = profitLoss;
-    order.deliveredAt = new Date();
     await order.save();
 
     return {
