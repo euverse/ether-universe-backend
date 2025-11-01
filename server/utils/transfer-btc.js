@@ -255,7 +255,7 @@ export async function btcTransfer({
     // Add output to recipient
     psbt.addOutput({
         address: toAddress,
-        value: amountToSend
+        value: BigInt(amountToSend)
     });
 
     // Create signing key pair
