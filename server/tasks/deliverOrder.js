@@ -1,9 +1,8 @@
-import { ORDER_STATUSES } from '../db/schemas/Order';
+import { ORDER_STATUSES, ORDER_TYPES } from '../db/schemas/Order';
 
 function calculateBiasedDeliveryPrice(purchasePrice, currentPrice, isBiasedPositive, orderType) {
-    const isLong = orderType === 'long';
-
-    const toDp = (float = 0, dp = 2) => Math.round(float * Math.pow(10, dp)) / Math.pow(10, dp)
+    const isLong = orderType === ORDER_TYPES.LONG;
+    const toDp = (float = 0, dp = 2) => Math.round(float * Math.pow(10, dp)) / Math.pow(10, dp);
 
     // Round to 2 decimals for comparison
     const roundedPurchase = toDp(purchasePrice, 2);
@@ -11,27 +10,27 @@ function calculateBiasedDeliveryPrice(purchasePrice, currentPrice, isBiasedPosit
 
     // Determine if current price already gives desired outcome
     const currentPnLPositive = isLong ? roundedCurrent > roundedPurchase : roundedCurrent < roundedPurchase;
+    const pricesEqual = roundedCurrent === roundedPurchase;
 
     // If current price already matches desired bias, use it as-is
-    if (currentPnLPositive === isBiasedPositive) {
+    // BUT only if prices aren't equal (which would be zero PnL)
+    if (!pricesEqual && currentPnLPositive === isBiasedPositive) {
         console.log(JSON.stringify({
             roundedPurchase,
             roundedCurrent,
             isBiasedPositive,
             orderType,
         }))
-
         return roundedCurrent;
     }
 
     const minChange = roundedCurrent > 100 ? 0.1 : 0.01;
     const maxAdd = roundedCurrent > 100 ? 0.6 : 0.06;
 
-    // Small random adjustment;
+    // Small random adjustment
     const smallAdjustment = Math.max(minChange, toDp((Math.random() * maxAdd + minChange), 2));
 
     let adjustedPrice;
-
     if (isBiasedPositive) {
         // Need positive PnL
         if (isLong) {
@@ -53,7 +52,6 @@ function calculateBiasedDeliveryPrice(purchasePrice, currentPrice, isBiasedPosit
     }
 
     const biasedDeliveryPrice = toDp(adjustedPrice, 2);
-
     console.log(JSON.stringify({
         roundedPurchase,
         roundedCurrent,
