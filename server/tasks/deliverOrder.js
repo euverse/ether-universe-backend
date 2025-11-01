@@ -14,12 +14,12 @@ function calculateBiasedDeliveryPrice(purchasePrice, currentPrice, isBiasedPosit
 
     // If current price already matches desired bias, use it as-is
     if (currentPnLPositive === isBiasedPositive) {
-        console.log(JSON.stringify(
+        console.log(JSON.stringify({
             roundedPurchase,
             roundedCurrent,
             isBiasedPositive,
             orderType,
-        ))
+        }))
 
         return roundedCurrent;
     }
@@ -54,14 +54,14 @@ function calculateBiasedDeliveryPrice(purchasePrice, currentPrice, isBiasedPosit
 
     const biasedDeliveryPrice = toDp(adjustedPrice, 2);
 
-    console.log(JSON.stringify(
+    console.log(JSON.stringify({
         roundedPurchase,
         roundedCurrent,
         isBiasedPositive,
         orderType,
         smallAdjustment,
         biasedDeliveryPrice
-    ))
+    }))
 
     return biasedDeliveryPrice;
 }
