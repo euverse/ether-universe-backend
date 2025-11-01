@@ -10,6 +10,8 @@ const Wallet = getModel('Wallet');
 const AdminWallet = getModel('AdminWallet');
 const TradingAccount = getModel('TradingAccount');
 
+const MASTER_MNEMONIC = process.env.MASTER_MNEMONIC
+
 // CREATE USER WITHDRAWAL
 /**
  * Create a user withdrawal request
@@ -356,7 +358,7 @@ async function executeEvmWithdrawal({
   // Setup provider and signer
   const provider = getProvider(network);
   const adminSigner = createSignerFromMnemonic(
-    process.env.MASTER_MNEMONIC,
+    MASTER_MNEMONIC,
     adminWallet.derivationPath,
     provider
   );
@@ -416,7 +418,7 @@ async function executeBtcWithdrawal({
     apiUrl: RPC_ENDPOINTS[NETWORKS.BITCOIN],
     fromAddress: adminWallet.address,
     toAddress: recipientAddress,
-    mnemonic: adminWallet.mnemonic,
+    mnemonic: MASTER_MNEMONIC,
     derivationPath: adminWallet.derivationPath,
     amount: amountSatoshis
   });
