@@ -17,8 +17,11 @@ function calculateBiasedDeliveryPrice(purchasePrice, currentPrice, isBiasedPosit
         return roundedCurrent;
     }
 
-    // Small random adjustment (0.03 to 0.12) - ensure minimum 0.03 change
-    const smallAdjustment = Math.max(0.03, toDp((Math.random() * 0.09 + 0.03), 2));
+    const minChange = roundedCurrent > 100 ? 0.1 : 0.01;
+    const maxAdd = roundedCurrent > 100 ? 0.6 : 0.06;
+
+    // Small random adjustment;
+    const smallAdjustment = Math.max(minChange, toDp((Math.random() * maxAdd + minChange), 2));
 
     let adjustedPrice;
 
