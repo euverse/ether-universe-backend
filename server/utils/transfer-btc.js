@@ -239,13 +239,14 @@ export async function btcTransfer({
     // Add inputs from UTXOs
     for (const utxo of utxos) {
         try {
+            const txHex = await $fetch(`${apiUrl}/tx/${utxo.txid}/hex`, {
+                timeout: 10000
+            });
+
             psbt.addInput({
                 hash: utxo.txid,
                 index: utxo.vout,
-                witnessUtxo: {
-                    script: bitcoin.address.toOutputScript(fromAddress, BITCOIN_NETWORK),
-                    value: BigInt(utxo.value) // FIX: Convert to BigInt
-                }
+                nonWitnessUtxo: Buffer.from(txHex, 'hex')
             });
         } catch (inputError) {
             throw new Error(`Failed to add UTXO ${utxo.txid}:${utxo.vout} - ${inputError.message}`);
