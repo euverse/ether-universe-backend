@@ -314,7 +314,6 @@ async function sweepSingleBitcoinDeposit(deposit) {
     // Get admin wallet for Bitcoin
     const adminWallet = await AdminWallet.findOne({
         chainType: CHAIN_TYPES.BTC,
-        network: NETWORKS.BITCOIN,
         isActive: true
     }).select('+derivationPath');
 
