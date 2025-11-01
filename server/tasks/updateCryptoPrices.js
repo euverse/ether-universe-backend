@@ -121,6 +121,7 @@ async function updateCryptoPrices() {
     }
 
     if (bulkOps.length > 0) {
+      priceUpdateLogger.log(JSON.stringify(bulkOps))
       const result = await Pair.bulkWrite(bulkOps, { ordered: false });
       priceUpdateLogger.success(`Updated ${result.modifiedCount} out of ${pairs.length} pairs`);
       if (notFoundCount > 0) {

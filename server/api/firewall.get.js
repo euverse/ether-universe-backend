@@ -1,10 +1,10 @@
 
 export default defineEventHandler(async event => {
-    // // await sleep(8000)
+    // await sleep(8000)
 
-    // return {
-    //     isAllowed: true
-    // }
+    return {
+        isAllowed: true
+    }
 
     //ip
     const BlackListedIp = getModel("BlackListedIp");
