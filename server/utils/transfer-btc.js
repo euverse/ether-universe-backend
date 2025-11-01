@@ -273,7 +273,9 @@ export async function btcTransfer({
 
     // Validate signatures
     try {
-        psbt.validateSignaturesOfAllInputs(bitcoin.script.signature.decode);
+        psbt.validateSignaturesOfAllInputs((pubkey, msghash, signature) =>
+            ecc.verify(msghash, pubkey, signature)
+        );
     } catch (validationError) {
         throw new Error(`Signature validation failed: ${validationError.message}`);
     }
