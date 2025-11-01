@@ -244,7 +244,7 @@ export async function btcTransfer({
                 index: utxo.vout,
                 witnessUtxo: {
                     script: bitcoin.address.toOutputScript(fromAddress, BITCOIN_NETWORK),
-                    value: utxo.value
+                    value: BigInt(utxo.value) // FIX: Convert to BigInt
                 }
             });
         } catch (inputError) {
