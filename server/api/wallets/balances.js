@@ -43,8 +43,7 @@ export default defineEventHandler(async (event) => {
     locked: balance.totals.locked
   }));
 
-  const usdtBalance = await getTradingAccountUSDTBalance(tradingAccount._id);
-  const totalBalanceUsd = parseFloat(usdtBalance.totals.available).toFixed(2);
+  const totalBalanceUsd = parseFloat(balances.map(b => parseFloat(b.balanceUsd)).reduce((acc, balance) => acc + balance, 0)).toFixed(2);
 
   return {
     balances,
