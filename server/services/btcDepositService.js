@@ -59,6 +59,8 @@ export async function scanBitcoinWalletForDeposits(wallet) {
         // Get on-chain balance
         const onchainBalance = await getBitcoinBalanceBTC(BTC_API_URL, wallet.address);
 
+        logger.log(JSON.stringify({ onchainBalance, address: wallet.address }))
+
         // Check minimum threshold
         if (parseFloat(onchainBalance) < parseFloat(MIN_BTC_THRESHOLD)) {
             return deposits;
@@ -143,7 +145,7 @@ export async function scanAllBitcoinWalletsForDeposits() {
             chainType: CHAIN_TYPES.BTC,
             derivationPath: { $ne: null } //select only active wallets
         });
-        
+
 
         const results = {
             scanned: 0,
@@ -331,11 +333,11 @@ async function sweepSingleBitcoinDeposit(deposit) {
         amount: deposit.amountSmallest,
         options: {
             minConfirmations: MIN_CONFIRMATIONS,
-            sweepAll: true // Sweep all funds minus fees
+            feesInclusive: true // Sweep all funds minus fees
         }
     });
 
-    // Update accounting - wrap in try-catch
+    // Update accounting
     try {
         // Convert actual swept amount to BTC
         const actualSweptAmountSat = transferResult.actualAmount;

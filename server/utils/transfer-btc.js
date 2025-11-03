@@ -127,7 +127,7 @@ function createKeyPair(mnemonic, derivationPath) {
  * @param {string|number} params.amount - Amount to transfer in satoshis
  * @param {Object} [params.options] - Optional parameters
  * @param {number} [params.options.minConfirmations=0] - Minimum confirmations required for UTXOs
- * @param {boolean} [params.options.sweepAll=false] - Sweep all funds (amount = total - fees)
+ * @param {boolean} [params.options.feesInclusive=false] - Sweep all funds (amount = total - fees)
  * @param {number} [params.options.customFeeRate] - Custom fee rate in sat/vB (overrides estimation)
  * @param {number} [params.options.feeBuffer=1.2] - Fee buffer multiplier
  * 
@@ -166,7 +166,7 @@ export async function btcTransfer({
     // Parse options
     const {
         minConfirmations = 0,
-        sweepAll = false,
+        feesInclusive = false,
         customFeeRate = null,
         feeBuffer = FEE_BUFFER_MULTIPLIER
     } = options;
@@ -198,7 +198,7 @@ export async function btcTransfer({
     let amountToSend;
     let requestedAmount = parseInt(amount);
 
-    if (sweepAll) {
+    if (feesInclusive) {
         // Sweep all: send everything minus fees
         amountToSend = totalInput - feeWithBuffer;
 
