@@ -29,7 +29,7 @@ async function getPendingDepositAmount(walletId, pairId, network) {
         wallet: walletId,
         pair: pairId,
         network,
-        status: { $in: [DEPOSIT_STATUS.PENDING, DEPOSIT_STATUS.PROCESSING] }
+        status: { $in: [DEPOSIT_STATUS.PENDING] }
     });
 
     const total = pendingDeposits.reduce((sum, deposit) => add(sum, deposit.amountSmallest), '0');
@@ -59,10 +59,8 @@ export async function scanBitcoinWalletForDeposits(wallet) {
         // Get on-chain balance
         const onchainBalance = await getBitcoinBalanceBTC(BTC_API_URL, wallet.address);
 
-        logger.log(JSON.stringify({ onchainBalance, address: wallet.address }))
-
         // Check minimum threshold
-        if (parseFloat(onchainBalance) < parseFloat(MIN_BTC_THRESHOLD)) {
+        if (isGreater(MIN_BTC_THRESHOLD, onchainBalance)) {
             return deposits;
         }
 
@@ -88,7 +86,7 @@ export async function scanBitcoinWalletForDeposits(wallet) {
             }
         );
 
-        // Calculate pending amount (including PROCESSING status)
+        // Calculate pending amount
         const pendingAmountSmallest = await getPendingDepositAmount(
             wallet._id,
             btcPair._id,
