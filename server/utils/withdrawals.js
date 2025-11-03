@@ -214,7 +214,7 @@ export async function approveUserWithdrawal(withdrawalId, adminId) {
     return withdrawal;
   } catch (error) {
     const { failError = {} } = error;
-    
+
     // If blockchain transaction fails, withdrawal remains PENDING
     throw new Error(`Withdrawal approval failed: ${failError.message || failError}`);
   }
@@ -557,15 +557,15 @@ async function revertUnlockUserBalances(actionReturn) {
     _id: { $in: unlockedDistributions.map(dist => dist.balanceId) }
   });
 
-  return await Promise.all(unlockedDistributions.map(async dist => {
+  return await Promise.all(unlockedDistributions.map(dist => {
     const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
     if (!balance) return;
 
     balance.locked = add(balance.locked, dist.amountSmallest);
     balance.available = max('0', subtract(balance.available, dist.amountSmallest));
-    balance.lastUnlockedAt = dist.prevLastUnlockedAt;
+    balance.lastUnlockedAt = dist.prevLastUnlockedAt || undefined;
     return balance.save();
-  }));
+  }).filter(Boolean));
 }
 
 async function revertRemoveUserWithdrawalFromBalances(actionReturn) {

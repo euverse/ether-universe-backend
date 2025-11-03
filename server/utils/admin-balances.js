@@ -1,4 +1,5 @@
 import { model } from 'mongoose';
+import { WITHDRAWAL_TYPES } from '~/db/schemas/UserWithdrawal';
 
 const AdminBalance = model('AdminBalance');
 const Pair = model('Pair');
@@ -271,7 +272,7 @@ export async function deductAdminBalance(
 
         balance.available = subtract(balance.available, amountSmallest);
 
-        if (withdrawalType === 'user') {
+        if (withdrawalType === WITHDRAWAL_TYPES.USER) {
             balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, amountSmallest);
         } else {
             balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, amountSmallest);
@@ -284,7 +285,7 @@ export async function deductAdminBalance(
 
         return {
             network: sourceNetwork,
-            amountSmallest:toDeduct,
+            amountSmallest,
             amount: toReadableUnit(amountSmallest, pair.decimals),
             balanceId: balance._id,
             prevLastWithdrawalAt,
