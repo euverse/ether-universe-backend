@@ -345,97 +345,108 @@ export async function removeUserWithdrawalFromBalances(
   amount, // human-readable
   sourceNetwork = null
 ) {
-  validatePositiveAmount(amount, 'amount');
 
-  const pair = await Pair.findOne({ baseAsset });
-  if (!pair) {
-    throw Error(`Pair ${baseAsset} not found`)
-  }
-
-  validateDecimals(pair.decimals);
-
-  const amountSmallest = toSmallestUnit(amount, pair.decimals);
-
-  const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();
-  const walletIds = wallets.map(w => w._id);
-
-  let balances = await Balance.find({
-    wallet: { $in: walletIds },
-    pair: pair._id,
-  }).sort({ available: -1 });
-
-  if (balances.length === 0) {
-    throw new Error(`No balance records found for pair: ${baseAsset}`);
-  }
-
-  // If source network specified, remove from that network only
-  if (sourceNetwork) {
-    const balance = balances.find(b => b.network === sourceNetwork);
-    if (!balance) {
-      throw new Error(`No balance record found for network: ${sourceNetwork}`);
-    }
-
-    if (!isGreaterOrEqual(balance.available, amountSmallest)) {
-      throw new Error(
-        `Insufficient balance on ${sourceNetwork}. Available: ${toReadableUnit(balance.available, pair.decimals)}, Required: ${amount}`
-      );
-    }
-
-    const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
-
-    balance.available = subtract(balance.available, amountSmallest);
-    balance.totalWithdrawn = add(balance.totalWithdrawn, amountSmallest);
-    balance.lastWithdrawalAt = new Date();
-
-    await balance.save();
-
-    return {
-      network: sourceNetwork,
-      amount: toReadableUnit(amountSmallest, pair.decimals),
-      amountSmallest,
-      prevLastWithdrawalAt,
-      balanceId: balance._id
-    };
-  }
-
-  // Otherwise, remove from balances with highest availability
-  let remaining = amountSmallest;
   const removed = [];
 
-  for (const balance of balances) {
-    if (compare(remaining, '0') <= 0) break;
+  try {
+    validatePositiveAmount(amount, 'amount');
 
-    if (compare(balance.available, '0') <= 0) continue; //skip zero balances
+    const pair = await Pair.findOne({ baseAsset });
+    if (!pair) {
+      throw Error(`Pair ${baseAsset} not found`)
+    }
 
-    const toRemove = min(balance.available, remaining);
+    validateDecimals(pair.decimals);
 
-    balance.available = subtract(balance.available, toRemove);
-    balance.totalWithdrawn = add(balance.totalWithdrawn, toRemove);
+    const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
-    const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
+    const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();
+    const walletIds = wallets.map(w => w._id);
 
-    balance.lastWithdrawalAt = new Date();
+    let balances = await Balance.find({
+      wallet: { $in: walletIds },
+      pair: pair._id,
+    }).sort({ available: -1 });
 
-    await balance.save();
+    if (balances.length === 0) {
+      throw new Error(`No balance records found for pair: ${baseAsset}`);
+    }
 
-    removed.push({
-      balanceId: balance._id,
-      network: balance.network,
-      amountSmallest: toRemove,
-      amount: toReadableUnit(toRemove, pair.decimals),
-      prevLastWithdrawalAt
-    });
+    // If source network specified, remove from that network only
+    if (sourceNetwork) {
+      const balance = balances.find(b => b.network === sourceNetwork);
+      if (!balance) {
+        throw new Error(`No balance record found for network: ${sourceNetwork}`);
+      }
 
-    remaining = subtract(remaining, toRemove);
+      if (!isGreaterOrEqual(balance.available, amountSmallest)) {
+        throw new Error(
+          `Insufficient balance on ${sourceNetwork}. Available: ${toReadableUnit(balance.available, pair.decimals)}, Required: ${amount}`
+        );
+      }
+
+      const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
+
+      balance.available = subtract(balance.available, amountSmallest);
+      balance.totalWithdrawn = add(balance.totalWithdrawn, amountSmallest);
+      balance.lastWithdrawalAt = new Date();
+
+      await balance.save();
+
+      removed.push({
+        network: sourceNetwork,
+        amount: toReadableUnit(amountSmallest, pair.decimals),
+        amountSmallest,
+        prevLastWithdrawalAt,
+        balanceId: balance._id
+      });
+
+    } else {
+
+      // Otherwise, remove from balances with highest availability
+      let remaining = amountSmallest;
+
+      for (const balance of balances) {
+        if (compare(remaining, '0') <= 0) break;
+
+        if (compare(balance.available, '0') <= 0) continue; //skip zero balances
+
+        const toRemove = min(balance.available, remaining);
+
+        balance.available = subtract(balance.available, toRemove);
+        balance.totalWithdrawn = add(balance.totalWithdrawn, toRemove);
+
+        const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
+
+        balance.lastWithdrawalAt = new Date();
+
+        await balance.save();
+
+        removed.push({
+          balanceId: balance._id,
+          network: balance.network,
+          amountSmallest: toRemove,
+          amount: toReadableUnit(toRemove, pair.decimals),
+          prevLastWithdrawalAt
+        });
+
+        remaining = subtract(remaining, toRemove);
+      }
+
+      if (compare(remaining, '0') > 0) {
+        throw new Error(
+          `Insufficient balance. Required: ${amount}, Missing: ${toReadableUnit(remaining, pair.decimals)}`
+        );
+      }
+    }
+  } catch (error) {
+    
+    throw error;
+
+  } finally {
+    return { distributions: removed };
   }
 
-  if (compare(remaining, '0') > 0) {
-    throw new Error(
-      `Insufficient balance. Required: ${amount}, Missing: ${toReadableUnit(remaining, pair.decimals)}`
-    );
-  }
-
-  return { distributions: removed };
 }
 
 // ORDER-RELATED BALANCE OPERATIONS

@@ -40,6 +40,7 @@ export async function Transact(opers = []) {
     for (const [index, oper] of opers.filter(op => op.action).entries()) {
         try {
             const actionReturn = await oper.action(resultMap);
+
             completedOpers.push({
                 index,
                 actionReturn,
@@ -61,12 +62,17 @@ export async function Transact(opers = []) {
     }
 
     if (failError || failedRollBacks.length > 0) {
-        throw {
+
+        const errorObj = {
             completedOpers,
             resolvedOpers,
             failedRollBacks,
             failError
         };
+
+        console.log(JSON.stringify(errorObj));
+
+        throw errorObj;
     }
 
     return {

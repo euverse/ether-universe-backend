@@ -417,8 +417,11 @@ async function executeBlockchainWithdrawal({
       pair,
       network,
       amount,
-      recipientAddress
-    });
+      recipientAddress,
+    },
+      {
+        feesInclusive: true
+      });
   } else {
     throw new Error(`Unsupported chain type: ${chainType}`);
   }
