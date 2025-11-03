@@ -70,6 +70,7 @@ export async function Transact(opers = []) {
     }
 
     return {
-        completedOpers
+        completedOpers,
+        resultMap
     };
 }

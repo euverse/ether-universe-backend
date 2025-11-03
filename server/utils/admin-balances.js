@@ -277,14 +277,18 @@ export async function deductAdminBalance(
             balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, amountSmallest);
         }
 
+        const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
         balance.lastWithdrawalAt = new Date();
 
         await balance.save();
 
         return {
             network: sourceNetwork,
+            amountSmallest:toDeduct,
             amount: toReadableUnit(amountSmallest, pair.decimals),
-            balanceId: balance._id
+            balanceId: balance._id,
+            prevLastWithdrawalAt,
+            withdrawalType
         };
     }
 
@@ -307,8 +311,7 @@ export async function deductAdminBalance(
             balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, toDeduct);
         }
 
-        const prevWithdrawalAt = balance.lastWithdrawalAt;
-
+        const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
         balance.lastWithdrawalAt = new Date();
 
         await balance.save();
@@ -316,9 +319,10 @@ export async function deductAdminBalance(
         deducted.push({
             balanceId: balance._id,
             network: balance.network,
+            amountSmallest: toDeduct,
             amount: toReadableUnit(toDeduct, pair.decimals),
-            prevWithdrawalAt,
-            lastWithdrawalAt:balance.lastWithdrawalAt
+            prevLastWithdrawalAt,
+            lastWithdrawalAt: balance.lastWithdrawalAt
         });
 
         remaining = subtract(remaining, toDeduct);
@@ -330,7 +334,7 @@ export async function deductAdminBalance(
         );
     }
 
-    return { distributions: deducted };
+    return { withdrawalType, distributions: deducted };
 }
 
 /**

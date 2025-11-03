@@ -1,7 +1,7 @@
 import { WITHDRAWAL_STATUSES, WITHDRAWAL_TYPES } from '~/db/schemas/UserWithdrawal.js';
 import { CHAIN_TYPES, NETWORKS } from '~/db/schemas/Network.js';
 import { ACCOUNT_TYPES } from '~/db/schemas/TradingAccount.js';
-import { lockUserAssetBalances } from './user-balances';
+import { lockUserAssetBalances, unlockUserAssetBalances } from './user-balances';
 import { Transact } from './transactions';
 
 const UserWithdrawal = getModel('UserWithdrawal');
@@ -77,25 +77,50 @@ export async function createUserWithdrawal({
 
   const amountUsd = pair.valueUsd * amount
 
-  //lock balances to prevent multiple withdraw requests
-  const { distributions: lockedDistributions } = await lockUserAssetBalances(realTradingAccount._id, baseAsset, amount, network)
+  const createUserWithdrawalOpers = [
+    {
+      action: async () => {
+        return await lockUserAssetBalances(realTradingAccount._id, baseAsset, amount, network)
+      },
+      remedy: async (actionReturn) => {
+        const { distributions } = actionReturn;
+        await unlockUserAssetBalances(pair.baseAsset, distributions)
+      }
+    },
+    {
+      returnAs: 'withdrawal',
+      action: async () => {
+        const withdrawal = await UserWithdrawal.create({
+          user: userId,
+          tradingAccount: tradingAccountId,
+          wallet: walletId,
+          pair: pair._id,
+          network,
+          requestedAmount: amount,
+          requestedAmountUsd: amountUsd,
+          recipientAddress,
+          status: WITHDRAWAL_STATUSES.PENDING,
+          lockedDistributions
+        });
+
+        return withdrawal;
+      }
+    }
+  ]
 
 
-  // Create withdrawal
-  const withdrawal = await UserWithdrawal.create({
-    user: userId,
-    tradingAccount: tradingAccountId,
-    wallet: walletId,
-    pair: pair._id,
-    network,
-    requestedAmount: amount,
-    requestedAmountUsd: amountUsd,
-    recipientAddress,
-    status: WITHDRAWAL_STATUSES.PENDING,
-    lockedDistributions
-  });
+  try {
+    const { resultMap } = await Transact(createUserWithdrawalOpers);
 
-  return withdrawal;
+    const { withdrawal } = resultMap;
+
+    return withdrawal;
+  } catch (error) {
+    const { failError = {} } = error;
+
+    throw new Error(`Error creating user withdrawal ${failError.message || failError}`)
+  }
+
 }
 
 // APPROVE USER WITHDRAWAL
@@ -126,29 +151,13 @@ export async function approveUserWithdrawal(withdrawalId, adminId) {
     {
       returnAs: 'unlockResult',
       action: async () => {
-        // unlock user locked balance
-        const unlockedDistributions = await unlockUserAssetBalances(
+        return await unlockUserAssetBalances(
           withdrawal.pair.baseAsset,
           withdrawal.lockedDistributions
         );
-        return { unlockedDistributions };  // Return it!
+
       },
-      remedy: async (actionReturn) => {
-        const { unlockedDistributions } = actionReturn;
-        const balances = await Balance.find({
-          _id: { $in: unlockedDistributions.map(dist => dist.balanceId) }
-        });
-
-        await Promise.all(unlockedDistributions.map(async dist => {
-          const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
-          if (!balance) return;
-
-          balance.locked = add(balance.locked, dist.amount);
-          balance.available = max('0', subtract(balance.available, dist.amount));  // Fixed: max not min
-          balance.lastUnlockedAt = dist.prevLastUnlockedAt;
-          return balance.save();
-        }));
-      }
+      remedy: revertUnlockUserBalances
     },
     {
       action: async () => {
@@ -204,8 +213,10 @@ export async function approveUserWithdrawal(withdrawalId, adminId) {
 
     return withdrawal;
   } catch (error) {
+    const { failError = {} } = error;
+    
     // If blockchain transaction fails, withdrawal remains PENDING
-    throw new Error(`Withdrawal approval failed: ${error.message}`);
+    throw new Error(`Withdrawal approval failed: ${failError.message || failError}`);
   }
 }
 
@@ -232,18 +243,41 @@ export async function rejectUserWithdrawal(
     throw new Error(`Cannot reject withdrawal with status: ${withdrawal.status}`);
   }
 
-  //unlock user locked balance
-  await unlockUserAssetBalances(withdrawal.pair.baseAsset, withdrawal.lockedDistributions)
 
-  withdrawal.status = WITHDRAWAL_STATUSES.REJECTED;
-  withdrawal.reviewedBy = adminId;
-  withdrawal.reviewedAt = new Date();
-  withdrawal.rejectionReason = rejectionReason;
-  withdrawal.rejectionDetails = rejectionDetails;
+  const rejectUserWithdrawalOpers = [
+    {
+      action: async () => {
+        return await unlockUserAssetBalances(withdrawal.pair.baseAsset, withdrawal.lockedDistributions)
+      },
+      remedy: revertUnlockUserBalances
+    },
+    {
+      action: async () => {
+        withdrawal.status = WITHDRAWAL_STATUSES.REJECTED;
+        withdrawal.reviewedBy = adminId;
+        withdrawal.reviewedAt = new Date();
+        withdrawal.rejectionReason = rejectionReason;
+        withdrawal.rejectionDetails = rejectionDetails;
 
-  await withdrawal.save();
+        await withdrawal.save();
+      }
+    }
+  ]
 
-  return withdrawal;
+
+  try {
+    const { resultMap } = Transact(rejectUserWithdrawalOpers)
+
+    const { withdrawal } = resultMap;
+
+    return withdrawal;
+  } catch (error) {
+
+    const { failError } = error || {}
+
+    throw failError;
+  }
+
 }
 
 // CREATE ADMIN WITHDRAWAL
@@ -289,7 +323,6 @@ export async function createAdminWithdrawal({
 
   const adminWithdrawalOpers = [
     {
-      returnAs: 'deductedDists',
       action: async () => {
         return await deductAdminBalance(
           baseAsset,
@@ -308,13 +341,13 @@ export async function createAdminWithdrawal({
           network,
           amount,
           recipientAddress,
-          isAdminWithdrawal: true
         });
-      }
+      },
+      isIrreversible: true
     },
     {
       returnAs: 'withdrawal',
-      action: async (resultMap) => {  // Now has access to previous results
+      action: async (resultMap) => {
         const { txResult } = resultMap;
 
         const withdrawal = await AdminWithdrawal.create({
@@ -338,12 +371,14 @@ export async function createAdminWithdrawal({
   ];
 
   try {
-    const { completedOpers } = await Transact(adminWithdrawalOpers);
-    const withdrawal = completedOpers.at(-1).actionReturn;
+    const { resultMap } = await Transact(adminWithdrawalOpers);
+
+    const { withdrawal } = resultMap;
+
     return withdrawal;
   } catch (error) {
-    const { failError } = error;
-    throw new Error(`Admin withdrawal failed: ${failError.message}`);
+    const { failError = {} } = error || {};
+    throw new Error(`Admin withdrawal failed: ${failError.message || failError}`);
   }
 }
 
@@ -492,36 +527,61 @@ async function executeBtcWithdrawal({
 }
 
 // Transaction Utilities
-const revertDeductAdminBalance = async (deductedDists) => {
+async function revertDeductAdminBalance(actionReturn) {
+  const { distributions, withdrawalType } = actionReturn;
+
   const balances = await AdminBalance.find({
-    _id: { $in: deductedDists.map(d => d.balanceId) }
+    _id: { $in: distributions.map(d => d.balanceId) }
   });
 
-  await Promise.all(
-    deductedDists.map(dist => {
+  return await Promise.all(
+    distributions.map(dist => {
       const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
       if (!balance) return null;
 
-      balance.available = add(balance.available, dist.amount);
-      balance.totalWithdrawn = subtract(balance.totalWithdrawn, dist.amount);
-      balance.lastWithdrawalAt = dist.prevWithdrawalAt || undefined;
+      balance.available = add(balance.available, dist.amountSmallest);
+      if (withdrawalType === WITHDRAWAL_TYPES.USER) {
+        balance.totalWithdrawnToUsers = max('0', subtract(balance.totalWithdrawnToUsers, dist.amountSmallest));
+      } else {
+        balance.totalWithdrawnToAdmin = max('0', subtract(balance.totalWithdrawnToAdmin, dist.amountSmallest));
+      }
+      balance.lastWithdrawalAt = dist.prevLastWithdrawalAt || undefined;
       return balance.save();
     }).filter(Boolean)
   );
 }
 
-const revertRemoveUserWithdrawalFromBalances = async (deductedDists) => {
+async function revertUnlockUserBalances(actionReturn) {
+  const { unlockedDistributions } = actionReturn;
   const balances = await Balance.find({
-    _id: { $in: deductedDists.map(d => d.balanceId) }
+    _id: { $in: unlockedDistributions.map(dist => dist.balanceId) }
   });
 
-  await Promise.all(
-    deductedDists.map(dist => {
+  return await Promise.all(unlockedDistributions.map(async dist => {
+    const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
+    if (!balance) return;
+
+    balance.locked = add(balance.locked, dist.amountSmallest);
+    balance.available = max('0', subtract(balance.available, dist.amountSmallest));
+    balance.lastUnlockedAt = dist.prevLastUnlockedAt;
+    return balance.save();
+  }));
+}
+
+async function revertRemoveUserWithdrawalFromBalances(actionReturn) {
+  const { distributions } = actionReturn;
+
+  const balances = await Balance.find({
+    _id: { $in: distributions.map(d => d.balanceId) }
+  });
+
+  return await Promise.all(
+    distributions.map(dist => {
       const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
       if (!balance) return null;
 
-      balance.available = add(balance.available, dist.amount);
-      balance.totalWithdrawn = subtract(balance.totalWithdrawn, dist.amount);
+      balance.available = add(balance.available, dist.amountSmallest);
+      balance.totalWithdrawn = max('0', subtract(balance.totalWithdrawn, dist.amountSmallest));
       balance.lastWithdrawalAt = dist.prevLastWithdrawalAt || undefined;
       return balance.save();
     }).filter(Boolean)

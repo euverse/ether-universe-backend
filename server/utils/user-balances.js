@@ -411,6 +411,9 @@ export async function removeUserWithdrawalFromBalances(
 
     balance.available = subtract(balance.available, toRemove);
     balance.totalWithdrawn = add(balance.totalWithdrawn, toRemove);
+
+    const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
+
     balance.lastWithdrawalAt = new Date();
 
     await balance.save();
@@ -418,7 +421,9 @@ export async function removeUserWithdrawalFromBalances(
     removed.push({
       balanceId: balance._id,
       network: balance.network,
-      amount: toReadableUnit(toRemove, pair.decimals)
+      amountSmallest: toRemove,
+      amount: toReadableUnit(toRemove, pair.decimals),
+      prevLastWithdrawalAt
     });
 
     remaining = subtract(remaining, toRemove);
@@ -486,10 +491,13 @@ export async function lockUserAssetBalances(
 
     const toLock = min(balance.available, remaining);
 
+    const prevLastLockedAt = balance.lastLockedAt || null;
+
     plannedLocks.push({
       balanceId: balance._id,
       network: balance.network,
-      amount: toLock
+      amount: toLock,
+      prevLastLockedAt
     });
 
     remaining = subtract(remaining, toLock);
@@ -558,7 +566,6 @@ export async function unlockUserAssetBalances(baseAsset, distributions) {
         continue;
       }
 
-
       const prevLastUnlockedAt = balance.lastUnlockedAt;
 
       unlockedDistributions.push({
@@ -568,7 +575,14 @@ export async function unlockUserAssetBalances(baseAsset, distributions) {
 
       balance.locked = subtract(balance.locked, dist.amount);
       balance.available = add(balance.available, dist.amount);
-      balance.lastUnlockedAt = new Date();
+
+      //handle rollback cases
+      if (dist.lastLockedAt) {
+        balance.lastLockedAt = dist.lastLockedAt
+      } else {
+        balance.lastUnlockedAt = new Date();
+      }
+
       await balance.save();
 
       totalUnlocked = add(totalUnlocked, dist.amount);
