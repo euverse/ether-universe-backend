@@ -399,6 +399,66 @@ export async function unlockAllocations(baseAsset, distributions) {
     };
 }
 
+/**
+ * Remove withdrawal from allocations
+ * Input: human-readable amount, Output: human-readable result
+ */
+export async function deductFromAllocations(
+    tradingAccountId,
+    baseAsset,
+    amount // human-readable
+) {
+    validatePositiveAmount(amount, 'amount');
+
+    const pair = await Pair.findOne({ baseAsset });
+    if (!pair) {
+        throw new Error(`Pair ${baseAsset} not found`);
+    }
+    validateDecimals(pair.decimals);
+
+    const amountSmallest = toSmallestUnit(amount, pair.decimals);
+
+    const allocations = await AssetAllocation.find({
+        tradingAccount: tradingAccountId,
+        pair: pair._id
+    }).sort({ expiresAt: 1 }); // Sort by expiry (oldest first)
+
+    if (allocations.length === 0) {
+        throw new Error(`No allocation records found for pair: ${baseAsset}`);
+    }
+
+    // Remove from allocations with highest availability (oldest first)
+    let remaining = amountSmallest;
+    const removed = [];
+
+    for (const allocation of allocations) {
+        if (compare(remaining, '0') <= 0) break;
+        if (compare(allocation.available, '0') <= 0) continue; // skip zero available
+
+        const toRemove = min(allocation.available, remaining);
+        allocation.available = subtract(allocation.available, toRemove);
+        allocation.total = subtract(allocation.total, toRemove);
+        await allocation.save();
+
+        removed.push({
+            allocationId: allocation._id,
+            amount: toReadableUnit(toRemove, pair.decimals),
+            expiresAt: allocation.expiresAt
+        });
+
+        remaining = subtract(remaining, toRemove);
+    }
+
+    if (compare(remaining, '0') > 0) {
+        throw new Error(
+            `Insufficient allocation balance. Required: ${amount}, Missing: ${toReadableUnit(remaining, pair.decimals)}`
+        );
+    }
+
+    return { distributions: removed };
+}
+
+
 // USER-SPECIFIC FUNCTIONS
 
 /**

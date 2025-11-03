@@ -1,13 +1,16 @@
 import { WITHDRAWAL_STATUSES, WITHDRAWAL_TYPES } from '~/db/schemas/UserWithdrawal.js';
-import { CHAIN_TYPES, NETWORKS } from '../db/schemas/Network.js';
-import { ACCOUNT_TYPES } from '../db/schemas/TradingAccount.js';
-import { lockAssetBalances, unlockBalance } from './user-balances.js';
+import { CHAIN_TYPES, NETWORKS } from '~/db/schemas/Network.js';
+import { ACCOUNT_TYPES } from '~/db/schemas/TradingAccount.js';
+import { lockUserAssetBalances } from './user-balances';
+import { Transact } from './transactions';
 
 const UserWithdrawal = getModel('UserWithdrawal');
 const AdminWithdrawal = getModel('AdminWithdrawal');
 const Pair = getModel('Pair');
 const Wallet = getModel('Wallet');
 const AdminWallet = getModel('AdminWallet');
+const AdminBalance = getModel('AdminBalance');
+const Balance = getModel('Balance');
 const TradingAccount = getModel('TradingAccount');
 
 const MASTER_MNEMONIC = process.env.MASTER_MNEMONIC
@@ -75,7 +78,7 @@ export async function createUserWithdrawal({
   const amountUsd = pair.valueUsd * amount
 
   //lock balances to prevent multiple withdraw requests
-  const { distributions: lockedDistributions } = await lockAssetBalances(realTradingAccount._id, baseAsset, amount, network)
+  const { distributions: lockedDistributions } = await lockUserAssetBalances(realTradingAccount._id, baseAsset, amount, network)
 
 
   // Create withdrawal
@@ -118,49 +121,90 @@ export async function approveUserWithdrawal(withdrawalId, adminId) {
 
   const { pair, tradingAccount, network, requestedAmount, recipientAddress } = withdrawal;
 
+
+  const userWithdrawalOpers = [
+    {
+      returnAs: 'unlockResult',
+      action: async () => {
+        // unlock user locked balance
+        const unlockedDistributions = await unlockUserAssetBalances(
+          withdrawal.pair.baseAsset,
+          withdrawal.lockedDistributions
+        );
+        return { unlockedDistributions };  // Return it!
+      },
+      remedy: async (actionReturn) => {
+        const { unlockedDistributions } = actionReturn;
+        const balances = await Balance.find({
+          _id: { $in: unlockedDistributions.map(dist => dist.balanceId) }
+        });
+
+        await Promise.all(unlockedDistributions.map(async dist => {
+          const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
+          if (!balance) return;
+
+          balance.locked = add(balance.locked, dist.amount);
+          balance.available = max('0', subtract(balance.available, dist.amount));  // Fixed: max not min
+          balance.lastUnlockedAt = dist.prevLastUnlockedAt;
+          return balance.save();
+        }));
+      }
+    },
+    {
+      action: async () => {
+        return await removeUserWithdrawalFromBalances(
+          tradingAccount,
+          pair.baseAsset,
+          requestedAmount,
+          network
+        );
+      },
+      remedy: revertRemoveUserWithdrawalFromBalances
+    },
+    {
+      action: async () => {
+        return await deductAdminBalance(
+          pair.baseAsset,
+          requestedAmount,
+          WITHDRAWAL_TYPES.USER,
+          network
+        );
+      },
+      remedy: revertDeductAdminBalance
+    },
+    {
+      returnAs: 'txResult',
+      action: async () => {
+        return await executeBlockchainWithdrawal({
+          pair,
+          network: withdrawal.network,
+          amount: requestedAmount,
+          recipientAddress
+        });
+      },
+      isIrreversible: true
+    },
+    {
+      action: async ({ txResult }) => {
+        withdrawal.status = WITHDRAWAL_STATUSES.PROCESSING;
+        withdrawal.reviewedBy = adminId;
+        withdrawal.reviewedAt = new Date();
+        withdrawal.processedAt = new Date();
+        withdrawal.txHash = txResult.txHash;
+        withdrawal.fee = txResult.fee || '0';
+        return await withdrawal.save();
+      }
+    }
+  ];
+
   try {
-    //unlock user locked balance
-    await unlockBalance(withdrawal.pair.baseAsset, withdrawal.lockedDistributions)
+    const { resultMap } = await Transact(userWithdrawalOpers);
 
-    // Step 1: Deduct user balance
-    await removeWithdrawal(
-      tradingAccount,
-      pair.baseAsset,
-      requestedAmount,
-      network
-    );
-
-    // Step 2: Deduct admin balance
-    await deductAdminBalance(
-      pair.baseAsset,
-      requestedAmount,
-      WITHDRAWAL_TYPES.USER,
-      network
-    );
-
-    // Step 3: Initiate blockchain transaction
-    const txResult = await executeBlockchainWithdrawal({
-      pair,
-      network: withdrawal.network,
-      amount: requestedAmount,
-      recipientAddress
-    });
-
-    // Step 4: Update withdrawal
-    withdrawal.status = WITHDRAWAL_STATUSES.PROCESSING;
-    withdrawal.reviewedBy = adminId;
-    withdrawal.reviewedAt = new Date();
-    withdrawal.processedAt = new Date();
-    withdrawal.txHash = txResult.txHash;
-    withdrawal.fee = txResult.fee || '0';
-
-    await withdrawal.save();
+    const { withdrawal } = resultMap;
 
     return withdrawal;
-
   } catch (error) {
     // If blockchain transaction fails, withdrawal remains PENDING
-    // Balances are already deducted, so admin needs to handle manually
     throw new Error(`Withdrawal approval failed: ${error.message}`);
   }
 }
@@ -189,7 +233,7 @@ export async function rejectUserWithdrawal(
   }
 
   //unlock user locked balance
-  await unlockBalance(withdrawal.pair.baseAsset, withdrawal.lockedDistributions)
+  await unlockUserAssetBalances(withdrawal.pair.baseAsset, withdrawal.lockedDistributions)
 
   withdrawal.status = WITHDRAWAL_STATUSES.REJECTED;
   withdrawal.reviewedBy = adminId;
@@ -243,45 +287,63 @@ export async function createAdminWithdrawal({
       throw new Error(`Network ${network} not supported for ${baseAsset}`);
     }
 
+  const adminWithdrawalOpers = [
+    {
+      returnAs: 'deductedDists',
+      action: async () => {
+        return await deductAdminBalance(
+          baseAsset,
+          amount,
+          WITHDRAWAL_TYPES.ADMIN,
+          network
+        );
+      },
+      remedy: revertDeductAdminBalance
+    },
+    {
+      returnAs: 'txResult',
+      action: async () => {
+        return await executeBlockchainWithdrawal({
+          pair,
+          network,
+          amount,
+          recipientAddress,
+          isAdminWithdrawal: true
+        });
+      }
+    },
+    {
+      returnAs: 'withdrawal',
+      action: async (resultMap) => {  // Now has access to previous results
+        const { txResult } = resultMap;
+
+        const withdrawal = await AdminWithdrawal.create({
+          initiatedBy: adminId,
+          adminWallet: adminWalletId,
+          pair: pair._id,
+          network,
+          requestedAmount: amount,
+          requestedAmountUsd: pair.valueUsd * amount,
+          recipientAddress,
+          purpose,
+          notes,
+          status: WITHDRAWAL_STATUSES.PROCESSING,
+          txHash: txResult.txHash,
+          fee: txResult.fee || '0',
+          processedAt: new Date()
+        });
+        return withdrawal;
+      }
+    }
+  ];
+
   try {
-    // Step 1: Deduct admin balance
-    await deductAdminBalance(
-      baseAsset,
-      amount,
-      WITHDRAWAL_TYPES.ADMIN,
-      network
-    );
-
-    // Step 2: Initiate blockchain transaction
-    const txResult = await executeBlockchainWithdrawal({
-      pair,
-      network,
-      amount,
-      recipientAddress,
-      isAdminWithdrawal: true
-    });
-
-    // Step 3: Create withdrawal record
-    const withdrawal = await AdminWithdrawal.create({
-      initiatedBy: adminId,
-      adminWallet: adminWalletId,
-      pair: pair._id,
-      network,
-      requestedAmount: amount,
-      requestedAmountUsd: pair.valueUsd * amount,
-      recipientAddress,
-      purpose,
-      notes,
-      status: WITHDRAWAL_STATUSES.PROCESSING,
-      txHash: txResult.txHash,
-      fee: txResult.fee || '0',
-      processedAt: new Date()
-    });
-
+    const { completedOpers } = await Transact(adminWithdrawalOpers);
+    const withdrawal = completedOpers.at(-1).actionReturn;
     return withdrawal;
-
   } catch (error) {
-    throw new Error(`Admin withdrawal failed: ${error.message}`);
+    const { failError } = error;
+    throw new Error(`Admin withdrawal failed: ${failError.message}`);
   }
 }
 
@@ -428,6 +490,44 @@ async function executeBtcWithdrawal({
     fee: result.fee.toString()
   };
 }
+
+// Transaction Utilities
+const revertDeductAdminBalance = async (deductedDists) => {
+  const balances = await AdminBalance.find({
+    _id: { $in: deductedDists.map(d => d.balanceId) }
+  });
+
+  await Promise.all(
+    deductedDists.map(dist => {
+      const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
+      if (!balance) return null;
+
+      balance.available = add(balance.available, dist.amount);
+      balance.totalWithdrawn = subtract(balance.totalWithdrawn, dist.amount);
+      balance.lastWithdrawalAt = dist.prevWithdrawalAt || undefined;
+      return balance.save();
+    }).filter(Boolean)
+  );
+}
+
+const revertRemoveUserWithdrawalFromBalances = async (deductedDists) => {
+  const balances = await Balance.find({
+    _id: { $in: deductedDists.map(d => d.balanceId) }
+  });
+
+  await Promise.all(
+    deductedDists.map(dist => {
+      const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
+      if (!balance) return null;
+
+      balance.available = add(balance.available, dist.amount);
+      balance.totalWithdrawn = subtract(balance.totalWithdrawn, dist.amount);
+      balance.lastWithdrawalAt = dist.prevLastWithdrawalAt || undefined;
+      return balance.save();
+    }).filter(Boolean)
+  );
+}
+
 
 // GET PENDING USER WITHDRAWALS
 /**

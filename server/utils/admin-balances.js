@@ -307,6 +307,8 @@ export async function deductAdminBalance(
             balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, toDeduct);
         }
 
+        const prevWithdrawalAt = balance.lastWithdrawalAt;
+
         balance.lastWithdrawalAt = new Date();
 
         await balance.save();
@@ -314,7 +316,9 @@ export async function deductAdminBalance(
         deducted.push({
             balanceId: balance._id,
             network: balance.network,
-            amount: toReadableUnit(toDeduct, pair.decimals)
+            amount: toReadableUnit(toDeduct, pair.decimals),
+            prevWithdrawalAt,
+            lastWithdrawalAt:balance.lastWithdrawalAt
         });
 
         remaining = subtract(remaining, toDeduct);

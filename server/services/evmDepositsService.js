@@ -674,7 +674,7 @@ async function sweepSingleDeposit(deposit) {
         // Convert actualSweptAmount back to readable for accounting
         const actualSweptAmountReadable = toReadableUnit(transferResult.actualAmount, pair.decimals);
 
-        await addDeposit(
+        await addUserDeposit(
             deposit.tradingAccount,
             pair.baseAsset,
             actualSweptAmountReadable,

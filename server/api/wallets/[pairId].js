@@ -1,5 +1,3 @@
-import { getTotalBalanceForPair } from "../../utils/user-balances";
-
 export default defineEventHandler(async (event) => {
     const { pairId } = getRouterParams(event);
     const { accountId } = getQuery(event, query => {
@@ -23,19 +21,8 @@ export default defineEventHandler(async (event) => {
         });
     }
 
-    let totals;
-
-    if (pair.baseAsset === "USDT") {
-        //include allocated usdt
-        const { totals: usdtTotals } = await getTradingAccountUSDTBalance(accountId)
-
-        totals = usdtTotals;
-
-    } else {
-        const { totals: pairTotals } = await getTotalBalanceForPair(accountId, pair.baseAsset)
-
-        totals = pairTotals;
-    }
+    //include allocated usdt
+    const { totals } = await getAggregateTotalForPair(accountId, pair.baseAsset)
 
     const Wallet = getModel('Wallet');
 

@@ -220,7 +220,7 @@ export async function getTotalBalanceForPair(tradingAccountId, baseAsset) {
  * Add deposit (predeposited (eg in demos) or user deposits or orders)
  * Input: human-readable amount, Output: human-readable result
  */
-export async function addDeposit(
+export async function addUserDeposit(
   tradingAccountId,
   baseAsset,
   amount, // human-readable
@@ -274,7 +274,7 @@ export async function addDeposit(
  * Add PnL to any available balance for a trading account
  * Input: human-readable amount
  */
-export async function addPnL(
+export async function addTradingAccountPnL(
   tradingAccountId,
   baseAsset,
   amount, // human-readable (can be positive or negative)
@@ -339,7 +339,7 @@ export async function addPnL(
  * Remove withdrawal
  * Input: human-readable amount, Output: human-readable result
  */
-export async function removeWithdrawal(
+export async function removeUserWithdrawalFromBalances(
   tradingAccountId,
   baseAsset,
   amount, // human-readable
@@ -381,6 +381,8 @@ export async function removeWithdrawal(
       );
     }
 
+    const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
+
     balance.available = subtract(balance.available, amountSmallest);
     balance.totalWithdrawn = add(balance.totalWithdrawn, amountSmallest);
     balance.lastWithdrawalAt = new Date();
@@ -390,6 +392,8 @@ export async function removeWithdrawal(
     return {
       network: sourceNetwork,
       amount: toReadableUnit(amountSmallest, pair.decimals),
+      amountSmallest,
+      prevLastWithdrawalAt,
       balanceId: balance._id
     };
   }
@@ -435,7 +439,7 @@ export async function removeWithdrawal(
  * Lock balance for an order
  * Input: human-readable amount, Output: distributions in smallest units (for settlement)
  */
-export async function lockAssetBalances(
+export async function lockUserAssetBalances(
   tradingAccountId,
   baseAsset,
   amount, // human-readable
@@ -521,7 +525,7 @@ export async function lockAssetBalances(
  * Unlock balance (eg when order is cancelled or funds unfreezed)
  * Input: distributions in smallest units from lockBalanceForOrder
  */
-export async function unlockBalance(baseAsset, distributions) {
+export async function unlockUserAssetBalances(baseAsset, distributions) {
   if (!distributions || distributions.length === 0) {
     throw new Error('No distributions provided for unlock');
   }
@@ -534,6 +538,7 @@ export async function unlockBalance(baseAsset, distributions) {
   validateDecimals(pair.decimals);
 
   const errors = [];
+  const unlockedDistributions = [];
   let totalUnlocked = '0';
 
   for (const dist of distributions) {
@@ -553,6 +558,14 @@ export async function unlockBalance(baseAsset, distributions) {
         continue;
       }
 
+
+      const prevLastUnlockedAt = balance.lastUnlockedAt;
+
+      unlockedDistributions.push({
+        ...dist,
+        prevLastUnlockedAt,
+      })
+
       balance.locked = subtract(balance.locked, dist.amount);
       balance.available = add(balance.available, dist.amount);
       balance.lastUnlockedAt = new Date();
@@ -569,6 +582,7 @@ export async function unlockBalance(baseAsset, distributions) {
   }
 
   return {
-    totalUnlocked: toReadableUnit(totalUnlocked, pair.decimals)
+    totalUnlocked: toReadableUnit(totalUnlocked, pair.decimals),
+    unlockedDistributions
   };
 }

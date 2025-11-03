@@ -54,18 +54,17 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-
     const exchangeRate = fromPair.valueUsd / toPair.valueUsd
 
     const toAmount = exchangeRate * amount;
 
-    await removeWithdrawal(
+    await removeUserWithdrawalFromAggregateTotal(
       realAccount._id,
       fromAsset,
       amount
     )
 
-    await addDeposit(
+    await addUserDeposit(
       realAccount._id,
       toAsset,
       toAmount

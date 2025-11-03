@@ -341,7 +341,7 @@ async function sweepSingleBitcoinDeposit(deposit) {
         const actualSweptAmountSat = transferResult.actualAmount;
         const actualSweptAmount = toReadableUnit(actualSweptAmountSat.toString(), 8);
 
-        await addDeposit(
+        await addUserDeposit(
             deposit.tradingAccount,
             pair.baseAsset,
             actualSweptAmount,

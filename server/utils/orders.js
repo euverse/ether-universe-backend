@@ -5,56 +5,6 @@ const Order = getModel("Order")
 const Balance = getModel("Balance")
 const AssetAllocation = getModel("AssetAllocation")
 
-
-/**
- * Get total USDT available across both allocations and balances
- * Returns combined human-readable amounts
- */
-export async function getTradingAccountUSDTBalance(tradingAccountId) {
-    const baseAsset = 'USDT';
-
-    // Get allocation stats - pass null for userId since we have tradingAccountId
-    const allocationStats = await getAllocationForPair(
-        { tradingAccountId, userId: null },
-        baseAsset
-    );
-
-    // Get balance stats
-    const balanceStats = await getTotalBalanceForPair(tradingAccountId, baseAsset);
-
-    // Combine available amounts
-    const pair = allocationStats.pair;
-    const decimals = pair.decimals;
-
-    const allocationAvailable = toSmallestUnit(allocationStats.totals.available, decimals);
-    const balanceAvailable = toSmallestUnit(balanceStats.totals.available, decimals);
-    const totalAvailable = add(allocationAvailable, balanceAvailable);
-
-    const allocationLocked = toSmallestUnit(allocationStats.totals.locked, decimals);
-    const balanceLocked = toSmallestUnit(balanceStats.totals.locked, decimals);
-    const totalLocked = add(allocationLocked, balanceLocked);
-
-    const grandTotal = add(totalAvailable, totalLocked);
-
-    return {
-        pair,
-        totals: {
-            available: toReadableUnit(totalAvailable, decimals),
-            locked: toReadableUnit(totalLocked, decimals),
-            total: toReadableUnit(grandTotal, decimals)
-        },
-        breakdown: {
-            allocations: allocationStats.totals,
-            balances: balanceStats.totals
-        },
-        smallestUnits: {
-            available: totalAvailable,
-            locked: totalLocked,
-            total: grandTotal,
-        }
-    };
-}
-
 /**
  * Lock USDT - tries allocations first, then balances
  * Returns combined distributions for later unlocking
@@ -101,7 +51,7 @@ export async function lockUSDT({ tradingAccountId, userId }, amount, preferredNe
     // PHASE 2: Lock remaining from balances if needed
     if (compare(remaining, '0') > 0) {
         const resolvedAccountId = await resolveTradingAccount({ tradingAccountId, userId });
-        const balanceResult = await lockAssetBalances(
+        const balanceResult = await lockUserAssetBalances(
             resolvedAccountId,
             baseAsset,
             toReadableUnit(remaining, pair.decimals),
@@ -157,7 +107,7 @@ export async function unlockUSDT({ allocations, balances }) {
 
     // Unlock balances if provided
     if (balances && balances.length > 0) {
-        const balanceResult = await unlockBalance(baseAsset, balances);
+        const balanceResult = await unlockUserAssetBalances(baseAsset, balances);
         results.balances = balanceResult;
         totalUnlocked = add(
             totalUnlocked,
@@ -376,8 +326,8 @@ export async function settleOrder(
                     isProfit
                 );
             } else {
-                // Allocation locks only -> addPnL
-                pnLResult = await addPnL(
+                // Allocation locks only -> addTradingAccountPnL
+                pnLResult = await addTradingAccountPnL(
                     tradingAccountId,
                     baseAsset,
                     profitOrLoss

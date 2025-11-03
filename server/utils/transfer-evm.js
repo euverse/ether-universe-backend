@@ -6,7 +6,6 @@ export function validateEVMAddress(walletAddress, { type = "wallet", errorMsg = 
     }
 }
 
-
 /**
  * Calculate estimated gas cost for an ERC-20 token transfer
  * 
