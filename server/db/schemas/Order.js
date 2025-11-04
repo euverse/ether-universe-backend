@@ -31,8 +31,7 @@ const orderSchema = new Schema({
   amountUsdt: {
     type: Number,
     required: true,
-    min: 0.01,
-    max: 50000
+    min: 1,
   },
   leverage: {
     type: Number,
