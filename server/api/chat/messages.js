@@ -90,8 +90,7 @@ export default defineEventHandler(async event => {
         author: {
             _id: message.author._id,
             ...(message.type == MESSAGE_TYPES.ADMIN && {
-                fullName: admin.fullName.split(' ')[0],
-                avatarUrl: admin.avatarUrl
+                fullName: "Customer Service",
             })
         },
         createdAt: message.createdAt,
