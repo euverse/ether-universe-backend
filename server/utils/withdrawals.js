@@ -307,7 +307,7 @@ export async function createAdminWithdrawal({
   }
 
 
-  const { totals = {}, byNetwork = {} } = await getAdminBalancesForPair(pair.baseAsset);
+  const { totals = {}, byNetwork = {} } = await getAdminTotalBalanceForPair(pair.baseAsset);
 
   const hasEnoughBalance = isGreaterOrEqual(totals.available, amount)
 
