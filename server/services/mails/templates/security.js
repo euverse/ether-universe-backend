@@ -18,7 +18,7 @@ securityTemplates.adminPasswordReset = `
       ${securityTemplates.header}
       
       <div style="padding: 24px; background: #ffffff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-        <p style="margin-bottom: 16px;">Hello  ,</p>
+        <p style="margin-bottom: 16px;">Hello Admin,</p>
         
         <p style="margin-bottom: 16px;">We received a request to reset your password. First sign in to your admin panel and then click the button below to create a new password for your account. This link will expire in 15 minutes for security reasons.</p>
         
@@ -42,7 +42,7 @@ securityTemplates.passwordResetConfirmation = `
     ${securityTemplates.header}
     
     <div style="padding: 24px; background: #ffffff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-      <p style="margin-bottom: 16px;">Hello <%= studentName %>,</p>
+      <p style="margin-bottom: 16px;">Hello Admin,</p>
       
       <p style="margin-bottom: 16px;">Your password was successfully reset on <%= time.stamp %> ( <%= time.zone %>) .</p>
 
