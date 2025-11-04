@@ -85,13 +85,13 @@ export async function createUserWithdrawal({
       },
       remedy: async (actionReturn) => {
         const { distributions } = actionReturn;
-        await unlockUserAssetBalances(pair.baseAsset, distributions)
+         return await unlockUserAssetBalances(pair.baseAsset, distributions)
       }
     },
     {
       returnAs: 'withdrawal',
-      action: async ({ assetLocks }) => {
-        const { distributions: lockedDistributions } = assetLocks;
+      action: async ({ assetLock }) => {
+        const { distributions: lockedDistributions } = assetLock;
 
         const withdrawal = await UserWithdrawal.create({
           user: userId,
