@@ -11,7 +11,7 @@ export default defineEventHandler(async (event) => {
         const sessionAdmin = event.context.auth.admin
 
         await createAdminWithdrawal({
-            adminid: sessionAdmin._id,
+            adminId: sessionAdmin._id,
             baseAsset,
             amount, // human-readable
             recipientAddress,
