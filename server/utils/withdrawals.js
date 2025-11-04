@@ -55,7 +55,6 @@ export async function createUserWithdrawal({
 
   const tradingAccountId = realTradingAccount._id
 
-
   const PAIR_CHAINS = {
     USDT: CHAIN_TYPES.EVM,
     ETH: CHAIN_TYPES.EVM,
@@ -85,7 +84,7 @@ export async function createUserWithdrawal({
       },
       remedy: async (actionReturn) => {
         const { distributions } = actionReturn;
-         return await unlockUserAssetBalances(pair.baseAsset, distributions)
+        return await unlockUserAssetBalances(pair.baseAsset, distributions)
       }
     },
     {
@@ -291,9 +290,7 @@ export async function rejectUserWithdrawal(
  */
 export async function createAdminWithdrawal({
   adminId,
-  adminWalletId,
   baseAsset,
-  network,
   amount, // human-readable
   recipientAddress,
   purpose = null,
@@ -310,65 +307,116 @@ export async function createAdminWithdrawal({
   }
 
 
+  const { totals = {}, byNetwork = {} } = await getAdminBalancesForPair(pair.baseAsset);
+
+  const hasEnoughBalance = isGreaterOrEqual(totals.available, amount)
+
+  if (!hasEnoughBalance) {
+    throw Error(`Insufficient balance for pair ${pair.baseAsset}. Required ${amount} available ${totals.available}`)
+
+  }
+
+  const deductable = []
+
+  let remaining = amount;
+
+  for (const [network, balance] of Object.entries(byNetwork)) {
+    const toDeduct = min(remaining, balance.available)
+
+
+    deductable.push({
+      network,
+      amount: toDeduct
+    })
+
+    remaining = subtract(remaining, toDeduct)
+
+    if (isZero(remaining)) {
+      break;
+    }
+
+  }
+
+  const sampleNetwork = Object.keys(byNetwork)[0]
+
+  const chainType = getChainType(sampleNetwork)
+
   // Validate admin wallet
-  const adminWallet = await AdminWallet.findById(adminWalletId);
+  const adminWallet = await AdminWallet.findOne({
+    chainType
+  });
+
   if (!adminWallet) {
     throw new Error('Admin wallet not found');
   }
 
-
-  if (['USDT', 'ETH', 'BTC'].includes())
-
-    // Validate network
-    if (!pair.networks.includes(network)) {
-      throw new Error(`Network ${network} not supported for ${baseAsset}`);
-    }
-
   const adminWithdrawalOpers = [
     {
+      returnAs: 'deductions',
       action: async () => {
-        return await deductAdminBalance(
+        return await Promise.all(deductable.map(d => deductAdminBalance(
           baseAsset,
-          amount,
+          d.amount,
           WITHDRAWAL_TYPES.ADMIN,
-          network
-        );
+          d.network
+        )))
       },
       remedy: revertDeductAdminBalance
     },
     {
-      returnAs: 'txResult',
-      action: async () => {
-        return await executeBlockchainWithdrawal({
-          pair,
-          network,
-          amount,
-          recipientAddress,
-        });
+      returnAs: 'txResults',
+      action: async ({ deductions = [] }) => {
+
+        const txResults = [];
+
+        for (const deduction of deductions) {
+          const { distributions } = deduction;
+
+          for (const dist of distributions) {
+            const txResult = await executeBlockchainWithdrawal({
+              pair,
+              network: dist.network,
+              amount: dist.amount,
+              recipientAddress,
+            })
+
+            txResults.push({
+              ...txResult,
+              network: dist.network // pass on network for withdrawal records
+            })
+
+          }
+        }
+
+        return txResults;
       },
       isIrreversible: true
     },
     {
-      returnAs: 'withdrawal',
+      returnAs: 'withdrawals',
       action: async (resultMap) => {
-        const { txResult } = resultMap;
+        const { txResults } = resultMap;
 
-        const withdrawal = await AdminWithdrawal.create({
-          initiatedBy: adminId,
-          adminWallet: adminWalletId,
-          pair: pair._id,
-          network,
-          requestedAmount: amount,
-          requestedAmountUsd: pair.valueUsd * amount,
-          recipientAddress,
-          purpose,
-          notes,
-          status: WITHDRAWAL_STATUSES.PROCESSING,
-          txHash: txResult.txHash,
-          fee: txResult.fee || '0',
-          processedAt: new Date()
-        });
-        return withdrawal;
+        const withdrawalObjs = txResults.map(txResult => {
+          return {
+            initiatedBy: adminId,
+            adminWallet: adminWallet._id,
+            pair: pair._id,
+            network: txResult.network,
+            requestedAmount: amount,
+            requestedAmountUsd: pair.valueUsd * (txResult.amount || txResult.actualAmount || 0),
+            recipientAddress,
+            purpose,
+            notes,
+            status: WITHDRAWAL_STATUSES.PROCESSING,
+            txHash: txResult.txHash,
+            fee: txResult.fee || '0',
+            processedAt: new Date()
+          }
+        })
+
+        const withdrawals = await AdminWithdrawal.insertMany(withdrawalObjs);
+        return withdrawals;
       }
     }
   ];
@@ -376,9 +424,9 @@ export async function createAdminWithdrawal({
   try {
     const { resultMap } = await Transact(adminWithdrawalOpers);
 
-    const { withdrawal } = resultMap;
+    const { withdrawals } = resultMap;
 
-    return withdrawal;
+    return withdrawals;
   } catch (error) {
     const { failError = {} } = error || {};
     throw new Error(`Admin withdrawal failed: ${failError.message || failError}`);
@@ -533,28 +581,38 @@ async function executeBtcWithdrawal({
 }
 
 // Transaction Utilities
-async function revertDeductAdminBalance(actionReturn) {
-  const { distributions, withdrawalType } = actionReturn;
+async function revertDeductAdminBalance(deductions = []) {
 
-  const balances = await AdminBalance.find({
-    _id: { $in: distributions.map(d => d.balanceId) }
-  });
+  let revertions = []
+  for (const deducted of deductions) {
 
-  return await Promise.all(
-    distributions.map(dist => {
-      const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
-      if (!balance) return null;
+    const { distributions, withdrawalType } = deducted;
 
-      balance.available = add(balance.available, dist.amountSmallest);
-      if (withdrawalType === WITHDRAWAL_TYPES.USER) {
-        balance.totalWithdrawnToUsers = max('0', subtract(balance.totalWithdrawnToUsers, dist.amountSmallest));
-      } else {
-        balance.totalWithdrawnToAdmin = max('0', subtract(balance.totalWithdrawnToAdmin, dist.amountSmallest));
-      }
-      balance.lastWithdrawalAt = dist.prevLastWithdrawalAt || undefined;
-      return balance.save();
-    }).filter(Boolean)
-  );
+    const balances = await AdminBalance.find({
+      _id: { $in: distributions.map(d => d.balanceId) }
+    });
+
+
+    const distRevertions = await Promise.all(
+      distributions.map(dist => {
+        const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
+        if (!balance) return null;
+
+        balance.available = add(balance.available, dist.amountSmallest);
+        if (withdrawalType === WITHDRAWAL_TYPES.USER) {
+          balance.totalWithdrawnToUsers = max('0', subtract(balance.totalWithdrawnToUsers, dist.amountSmallest));
+        } else {
+          balance.totalWithdrawnToAdmin = max('0', subtract(balance.totalWithdrawnToAdmin, dist.amountSmallest));
+        }
+        balance.lastWithdrawalAt = dist.prevLastWithdrawalAt || undefined;
+        return balance.save();
+      }).filter(Boolean)
+    );
+
+    revertions = revertions.concat(distRevertions)
+  }
+
+  return revertions;
 }
 
 async function revertUnlockUserBalances(actionReturn) {

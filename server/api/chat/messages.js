@@ -90,7 +90,7 @@ export default defineEventHandler(async event => {
         author: {
             _id: message.author._id,
             ...(message.type == MESSAGE_TYPES.ADMIN && {
-                fullName: "Customer Service",
+                fullName: "Ether Universe",
             })
         },
         createdAt: message.createdAt,

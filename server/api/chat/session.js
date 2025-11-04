@@ -48,7 +48,7 @@ export default defineEventHandler(async event => {
     return {
         otherUser: {
             _id: admin._id,
-            fullName: "Customer Service",
+            fullName: "Ether Universe",
         },
         currentUser: {
             _id: user._id,
@@ -60,7 +60,7 @@ export default defineEventHandler(async event => {
             author: {
                 _id: message.author._id,
                 ...(message.type == MESSAGE_TYPES.ADMIN && {
-                    fullName: "Customer Service",
+                    fullName: "Ether Universe",
                 })
             },
             createdAt: message.createdAt,
