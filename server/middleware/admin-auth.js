@@ -2,20 +2,14 @@ import jwt from 'jsonwebtoken';
 import { ADMIN_ROLES } from '../db/schemas/Admin';
 
 export default defineEventHandler(async (event) => {
-    if (event.context.skipAuth) return;
-
-    const plainPath = event.path.replace('/api/', '/');
-
-    if (!plainPath.startsWith('/admin')) {
-        return;
-    }
+    if (event.context.skipAuth || !event.context.isAdminRoute) return;
 
     const freeRoutes = [
         '/admin/auth/signin',
         '/admin/auth/refresh-token'
     ]
-
-    if (freeRoutes.includes(plainPath)) return;
+  
+    if (freeRoutes.includes(event.context.plainPath)) return;
 
     const accessToken = getHeader(event, 'authorization')?.split(' ')?.[1]?.trim();
 

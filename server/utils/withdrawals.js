@@ -567,8 +567,8 @@ async function revertUnlockUserBalances(actionReturn) {
     const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
     if (!balance) return;
 
-    balance.locked = add(balance.locked, dist.amountSmallest);
-    balance.available = max('0', subtract(balance.available, dist.amountSmallest));
+    balance.locked = add(balance.locked, dist.amount);
+    balance.available = max('0', subtract(balance.available, dist.amount));
     balance.lastUnlockedAt = dist.prevLastUnlockedAt || undefined;
     return balance.save();
   }).filter(Boolean));

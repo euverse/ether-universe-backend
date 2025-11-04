@@ -1,11 +1,15 @@
 import jwt from 'jsonwebtoken';
 
 export default defineEventHandler(async (event) => {
-    if (event.context.skipAuth) return;
+    if (event.context.skipAuth || event.context.isAdminRoute) return;
 
-    const plainPath = event.path.replace('/api/', '/');
+    const freeRoutes = [
+        '/auth/wallet/challenge',
+        '/auth/wallet/verify',
+        '/auth/refresh-token'
+    ]
 
-    if (plainPath.startsWith('/admin')) return;
+    if (freeRoutes.includes(event.context.plainPath)) return;
 
     const accessToken = getHeader(event, 'authorization')?.split(' ')?.[1]?.trim();
 
