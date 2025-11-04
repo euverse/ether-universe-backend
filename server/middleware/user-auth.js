@@ -23,12 +23,8 @@ export default defineEventHandler(async (event) => {
         }
     }
 
-
-    if (!plainPath.startsWith('/auth')) {
-        if (jwtError || !event.context.auth?.user) {
-            throw createError({ statusCode: 401, statusMessage: 'Unauthorized' });
-        }
-
+    if (jwtError || !event.context.auth?.user) {
+        throw createError({ statusCode: 401, statusMessage: 'Unauthorized' });
     }
 });
 

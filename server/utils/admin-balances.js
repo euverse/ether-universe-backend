@@ -238,104 +238,112 @@ export async function deductAdminBalance(
     withdrawalType = 'user',
     sourceNetwork = null
 ) {
-    validatePositiveAmount(amount, 'amount');
 
-    const pair = await Pair.findOne({ baseAsset });
-    if (!pair) {
-        throw Error(`Pair ${baseAsset} not found`);
-    }
+    try {
 
-    validateDecimals(pair.decimals);
+        validatePositiveAmount(amount, 'amount');
 
-    const amountSmallest = toSmallestUnit(amount, pair.decimals);
-
-    let balances = await AdminBalance.find({
-        pair: pair._id
-    }).sort({ available: -1 });
-
-    if (balances.length === 0) {
-        throw new Error(`No admin balance records found for pair: ${baseAsset}`);
-    }
-
-    // If source network specified, deduct from that network only
-    if (sourceNetwork) {
-        const balance = balances.find(b => b.network === sourceNetwork);
-        if (!balance) {
-            throw new Error(`No admin balance found for ${baseAsset} on ${sourceNetwork}`);
+        const pair = await Pair.findOne({ baseAsset });
+        if (!pair) {
+            throw Error(`Pair ${baseAsset} not found`);
         }
 
-        if (!isGreaterOrEqual(balance.available, amountSmallest)) {
-            throw new Error(
-                `Insufficient admin balance on ${sourceNetwork}. Available: ${toReadableUnit(balance.available, pair.decimals)}, Required: ${amount}`
-            );
+        validateDecimals(pair.decimals);
+
+        const amountSmallest = toSmallestUnit(amount, pair.decimals);
+
+        let balances = await AdminBalance.find({
+            pair: pair._id
+        }).sort({ available: -1 });
+
+        if (balances.length === 0) {
+            throw new Error(`No admin balance records found for pair: ${baseAsset}`);
         }
 
-        balance.available = subtract(balance.available, amountSmallest);
+        const deducted = [];
 
-        if (withdrawalType === WITHDRAWAL_TYPES.USER) {
-            balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, amountSmallest);
+        // If source network specified, deduct from that network only
+        if (sourceNetwork) {
+            const balance = balances.find(b => b.network === sourceNetwork);
+            if (!balance) {
+                throw new Error(`No admin balance found for ${baseAsset} on ${sourceNetwork}`);
+            }
+
+            if (!isGreaterOrEqual(balance.available, amountSmallest)) {
+                throw new Error(
+                    `Insufficient admin balance on ${sourceNetwork}. Available: ${toReadableUnit(balance.available, pair.decimals)}, Required: ${amount}`
+                );
+            }
+
+            balance.available = subtract(balance.available, amountSmallest);
+
+            if (withdrawalType === WITHDRAWAL_TYPES.USER) {
+                balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, amountSmallest);
+            } else {
+                balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, amountSmallest);
+            }
+
+            const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
+            balance.lastWithdrawalAt = new Date();
+
+            await balance.save();
+
+            deducted.push({
+                network: sourceNetwork,
+                amountSmallest,
+                amount: toReadableUnit(amountSmallest, pair.decimals),
+                balanceId: balance._id,
+                prevLastWithdrawalAt,
+                withdrawalType
+            })
+
         } else {
-            balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, amountSmallest);
+            // Otherwise, deduct from balances with highest availability
+            let remaining = amountSmallest;
+
+            for (const balance of balances) {
+                if (compare(remaining, '0') <= 0) break;
+
+                if (compare(balance.available, '0') <= 0) continue;
+
+                const toDeduct = min(balance.available, remaining);
+
+                balance.available = subtract(balance.available, toDeduct);
+
+                if (withdrawalType === 'user') {
+                    balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, toDeduct);
+                } else {
+                    balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, toDeduct);
+                }
+
+                const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
+                balance.lastWithdrawalAt = new Date();
+
+                await balance.save();
+
+                deducted.push({
+                    balanceId: balance._id,
+                    network: balance.network,
+                    amountSmallest: toDeduct,
+                    amount: toReadableUnit(toDeduct, pair.decimals),
+                    prevLastWithdrawalAt,
+                    lastWithdrawalAt: balance.lastWithdrawalAt
+                });
+
+                remaining = subtract(remaining, toDeduct);
+            }
+
+            if (compare(remaining, '0') > 0) {
+                throw new Error(
+                    `Insufficient admin balance. Required: ${amount}, Missing: ${toReadableUnit(remaining, pair.decimals)}`
+                );
+            }
         }
 
-        const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
-        balance.lastWithdrawalAt = new Date();
-
-        await balance.save();
-
-        return {
-            network: sourceNetwork,
-            amountSmallest,
-            amount: toReadableUnit(amountSmallest, pair.decimals),
-            balanceId: balance._id,
-            prevLastWithdrawalAt,
-            withdrawalType
-        };
+        return { withdrawalType, distributions: deducted };
+    } catch (error) {
+        throw error;
     }
-
-    // Otherwise, deduct from balances with highest availability
-    let remaining = amountSmallest;
-    const deducted = [];
-
-    for (const balance of balances) {
-        if (compare(remaining, '0') <= 0) break;
-
-        if (compare(balance.available, '0') <= 0) continue;
-
-        const toDeduct = min(balance.available, remaining);
-
-        balance.available = subtract(balance.available, toDeduct);
-
-        if (withdrawalType === 'user') {
-            balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, toDeduct);
-        } else {
-            balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, toDeduct);
-        }
-
-        const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
-        balance.lastWithdrawalAt = new Date();
-
-        await balance.save();
-
-        deducted.push({
-            balanceId: balance._id,
-            network: balance.network,
-            amountSmallest: toDeduct,
-            amount: toReadableUnit(toDeduct, pair.decimals),
-            prevLastWithdrawalAt,
-            lastWithdrawalAt: balance.lastWithdrawalAt
-        });
-
-        remaining = subtract(remaining, toDeduct);
-    }
-
-    if (compare(remaining, '0') > 0) {
-        throw new Error(
-            `Insufficient admin balance. Required: ${amount}, Missing: ${toReadableUnit(remaining, pair.decimals)}`
-        );
-    }
-
-    return { withdrawalType, distributions: deducted };
 }
 
 /**

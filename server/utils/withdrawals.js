@@ -79,6 +79,7 @@ export async function createUserWithdrawal({
 
   const createUserWithdrawalOpers = [
     {
+      returnAs: 'assetLock',
       action: async () => {
         return await lockUserAssetBalances(realTradingAccount._id, baseAsset, amount, network)
       },
@@ -89,7 +90,9 @@ export async function createUserWithdrawal({
     },
     {
       returnAs: 'withdrawal',
-      action: async () => {
+      action: async ({ assetLocks }) => {
+        const { distributions: lockedDistributions } = assetLocks;
+
         const withdrawal = await UserWithdrawal.create({
           user: userId,
           tradingAccount: tradingAccountId,

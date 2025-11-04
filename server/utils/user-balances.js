@@ -346,7 +346,6 @@ export async function removeUserWithdrawalFromBalances(
   sourceNetwork = null
 ) {
 
-  const removed = [];
 
   try {
     validatePositiveAmount(amount, 'amount');
@@ -371,6 +370,8 @@ export async function removeUserWithdrawalFromBalances(
     if (balances.length === 0) {
       throw new Error(`No balance records found for pair: ${baseAsset}`);
     }
+
+    const removed = [];
 
     // If source network specified, remove from that network only
     if (sourceNetwork) {
@@ -439,14 +440,13 @@ export async function removeUserWithdrawalFromBalances(
         );
       }
     }
+
+    return { distributions: removed };
   } catch (error) {
-    
     throw error;
 
-  } finally {
-    return { distributions: removed };
   }
-
+  
 }
 
 // ORDER-RELATED BALANCE OPERATIONS
