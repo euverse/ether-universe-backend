@@ -397,14 +397,21 @@ export async function createAdminWithdrawal({
       action: async (resultMap) => {
         const { txResults } = resultMap;
 
-        const withdrawalObjs = txResults.map(txResult => {
+        // Add validation
+        if (!txResults || txResults.length === 0) {
+          throw new Error('No transaction results to process');
+        }
+
+        const withdrawalObjs = txResults.map((txResult) => {
+          const actualAmount = txResult.amount || txResult.actualAmount || 0;
+
           return {
             initiatedBy: adminId,
             adminWallet: adminWallet._id,
             pair: pair._id,
             network: txResult.network,
-            requestedAmount: amount,
-            requestedAmountUsd: pair.valueUsd * (txResult.amount || txResult.actualAmount || 0),
+            requestedAmount: actualAmount,
+            requestedAmountUsd: pair.valueUsd * actualAmount,
             recipientAddress,
             purpose,
             notes,
@@ -413,9 +420,12 @@ export async function createAdminWithdrawal({
             fee: txResult.fee || '0',
             processedAt: new Date()
           }
-        })
+        });
 
+        console.log('Inserting withdrawals:', withdrawalObjs); // Debug log
         const withdrawals = await AdminWithdrawal.insertMany(withdrawalObjs);
+        console.log('Inserted withdrawals:', withdrawals); // Debug log
+
         return withdrawals;
       }
     }

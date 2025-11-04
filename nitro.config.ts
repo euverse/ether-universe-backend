@@ -12,7 +12,8 @@ export default defineNitroConfig({
   },
   runtimeConfig: {
     public: {
-      BASE_URL: process.env.BASE_URL
+      BASE_URL: process.env.BASE_URL,
+      APP_BASE_URL: process.env.APP_BASE_URL
     },
     auth: {
       user: {
@@ -23,10 +24,14 @@ export default defineNitroConfig({
         refreshTokenSecret: process.env.ADMIN_REFRESH_TOKEN_SECRET,
         accessTokenSecret: process.env.ADMIN_ACCESS_TOKEN_SECRET,
       },
+      passwordResetSecret:process.env.PASSWORD_RESET_SECRET,
       credentials: {
         adminFullName: process.env.ADMIN_FULLNAME,
         adminEmail: process.env.ADMIN_EMAIL,
         adminPassword: process.env.ADMIN_PASSWORD
+      },
+      mail: {
+        password: process.env.MAIL_PASS
       }
     },
     rpcUrls: {

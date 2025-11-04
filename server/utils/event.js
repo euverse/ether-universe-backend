@@ -30,6 +30,7 @@ export function appErrorHandler(apiHandler, { onError } = {}) {
             return await apiHandler(args)
 
         } catch (error) {
+            console.error(error)
             if (onError) {
                 await onError(error)
 
