@@ -19,7 +19,7 @@ export default defineEventHandler(async event => {
         name: { $regex: search, $options: 'i' }
       }).select('_id').lean();
 
-      const userIds = matchingUsers.map(u => u._id);
+      const userIds = matchingUsers.map(u => u?._id);
 
       searchFilter.$or = [
         { user: { $in: userIds } },
@@ -54,9 +54,9 @@ export default defineEventHandler(async event => {
 
       return {
         user: {
-          _id: chat.user._id.toString(),
-          fullName: chat.user.personalInfo?.firstName || 'Unknown User',
-          avatarUrl: chat.user.avatarUrl
+          _id: chat.user?._id.toString(),
+          fullName: chat.user?.personalInfo?.firstName || 'Unknown User',
+          avatarUrl: chat.user?.avatarUrl
         },
         recentMessage: recentMessage ? recentMessage.textContent : 'No messages yet',
         recentMessageTime: recentMessage ? recentMessage.createdAt : chat.createdAt,

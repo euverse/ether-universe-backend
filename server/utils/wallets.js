@@ -10,7 +10,7 @@ import { CHAIN_TYPES } from '../db/schemas/Network';
 const BIP32 = bip32.BIP32Factory(ecc);
 const ECPair = ECPairFactory(ecc);
 
-const MASTER_MNEMONIC = process.env.MASTER_MNEMONIC;
+const MASTER_MNEMONIC = useRuntimeConfig().MASTER_MNEMONIC;
 
 function sanitizeIndex(id) {
   return Math.min(Math.abs(id), 0x7fffffff);
@@ -86,7 +86,7 @@ export function getEVMSigner(derivationPath, rpcUrl) {
     throw new Error('Derivation path is required');
   }
 
-  const mnemonic = ethers.Mnemonic.fromPhrase(process.env.MASTER_MNEMONIC);
+  const mnemonic = ethers.Mnemonic.fromPhrase(useRuntimeConfig().MASTER_MNEMONIC);
   const hdNode = ethers.HDNodeWallet.fromMnemonic(mnemonic);
   const wallet = hdNode.derivePath(derivationPath);
   const provider = new ethers.providers.JsonRpcProvider(rpcUrl);

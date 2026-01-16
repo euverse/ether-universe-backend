@@ -310,7 +310,7 @@ async function fundWalletWithGas(deposit, network, userWalletAddress) {
     }
 
     // Validate master mnemonic
-    if (!process.env.MASTER_MNEMONIC) {
+    if (!useRuntimeConfig().MASTER_MNEMONIC) {
         throw new Error('MASTER_MNEMONIC environment variable not set');
     }
 
@@ -330,7 +330,7 @@ async function fundWalletWithGas(deposit, network, userWalletAddress) {
     // Get provider and create admin signer
     const provider = getProvider(network);
     const adminSigner = createSignerFromMnemonic(
-        process.env.MASTER_MNEMONIC,
+        useRuntimeConfig().MASTER_MNEMONIC,
         adminWallet.derivationPath,
         provider
     );
@@ -610,7 +610,7 @@ async function sweepSingleDeposit(deposit) {
     const network = deposit.network;
 
     // Validate master mnemonic
-    if (!process.env.MASTER_MNEMONIC) {
+    if (!useRuntimeConfig().MASTER_MNEMONIC) {
         throw new Error('MASTER_MNEMONIC environment variable not set');
     }
 
@@ -632,7 +632,7 @@ async function sweepSingleDeposit(deposit) {
     // Get provider and create signer
     const provider = getProvider(network);
     const signer = createSignerFromMnemonic(
-        process.env.MASTER_MNEMONIC,
+        useRuntimeConfig().MASTER_MNEMONIC,
         wallet.derivationPath,
         provider
     );

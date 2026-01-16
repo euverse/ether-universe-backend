@@ -35,7 +35,7 @@ function getResetLink(_id) {
         expiresIn: '15m'
     })
 
-    const resetLink = `${runtimeConfig.public.APP_BASE_URL}/admin/auth/change-password?token=${token}`;
+    const resetLink = `${runtimeConfig.public.WWW_BASE_URL}/admin/auth/change-password?token=${token}`;
 
     return resetLink;
 }

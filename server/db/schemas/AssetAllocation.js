@@ -1,4 +1,4 @@
-import { Schema } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 
 const assetAllocationSchema = new Schema(
     {
@@ -41,9 +41,10 @@ const assetAllocationSchema = new Schema(
     }
 );
 
-assetAllocationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+assetAllocationSchema.virtual('isExpired').get(function () {
+    return this.expiresAt < new Date();
+});
 
-assetAllocationSchema.index({ user: 1, pair: 1 });
 
 assetAllocationSchema.virtual('timeRemaining').get(function () {
     const remaining = this.expiresAt.getTime() - Date.now() || 0;

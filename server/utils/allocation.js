@@ -127,7 +127,7 @@ export async function resolveTradingAccount({ tradingAccountId, userId }) {
  * Get allocation stats for a specific pair in a trading account
  * Returns human-readable amounts
  */
-export async function getAllocationForPair({ tradingAccountId, userId }, baseAsset) {
+export async function getAllocationForPair({ tradingAccountId, userId }, baseAsset, { active = true } = {}) {
     const resolvedAccountId = await resolveTradingAccount({ tradingAccountId, userId });
 
     const pair = await Pair.findOne({ baseAsset });
@@ -139,7 +139,10 @@ export async function getAllocationForPair({ tradingAccountId, userId }, baseAss
 
     const allocations = await AssetAllocation.find({
         tradingAccount: resolvedAccountId,
-        pair: pair._id
+        pair: pair._id,
+        ...(active && {
+            expiresAt: { $gt: new Date() }
+        })
     }).sort({ expiresAt: 1 }); // Sort by expiry (oldest first)
 
     if (allocations.length === 0) {
@@ -202,11 +205,14 @@ export async function getAllocationForPair({ tradingAccountId, userId }, baseAss
  * Get all allocations for a trading account grouped by pair
  * Returns human-readable amounts
  */
-export async function getAllocationsByPair({ tradingAccountId, userId } = {}) {
+export async function getAllocationsByPair({ tradingAccountId, userId } = {}, { active = true } = {}) {
     const resolvedAccountId = await resolveTradingAccount({ tradingAccountId, userId });
 
     const allocations = await AssetAllocation.find({
-        tradingAccount: resolvedAccountId
+        tradingAccount: resolvedAccountId,
+        ...(active && {
+            expiresAt: { $gt: new Date() }
+        })
     })
         .populate('pair')
         .sort({ expiresAt: 1 });
@@ -288,7 +294,8 @@ export async function lockAllocations({ tradingAccountId, userId }, baseAsset, a
     // Get allocations sorted by expiry (oldest first)
     const allocations = await AssetAllocation.find({
         tradingAccount: resolvedAccountId,
-        pair: pair._id
+        pair: pair._id,
+        expiresAt: { $gt: new Date() }
     }).sort({ expiresAt: 1 });
 
     if (allocations.length === 0) {
@@ -486,20 +493,4 @@ export async function getUserAllocations(userId, limit = 10) {
             createdAt: allocation.createdAt
         };
     });
-}
-
-export async function hasActiveAllocations({ userId, tradingAccountId } = {}) {
-    if (!tradingAccountId && !userId) {
-        throw new Error('Either tradingAccountId or userId must be provided');
-    }
-
-    const allocationsExist = await AssetAllocation.exists({
-        $or: [
-            { user: userId },
-            { tradingAccount: tradingAccountId }
-        ]
-    })
-
-
-    return !!allocationsExist;
 }

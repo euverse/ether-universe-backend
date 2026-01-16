@@ -1,4 +1,3 @@
-import { getRouterParam } from 'h3';
 import { VERIFICATION_STATUSES } from '~/db/schemas/KYCSubmission.js';
 import { ACCOUNT_TYPES } from '~/db/schemas/TradingAccount';
 
@@ -147,8 +146,6 @@ export default defineEventHandler(async (event) => {
                 }
             })
 
-        } else if (status === VERIFICATION_STATUSES.PROCESSING) {
-            kycSubmission.processingStage = processingStage
         }
 
         await kycSubmission.save();
@@ -168,7 +165,7 @@ export default defineEventHandler(async (event) => {
         console.error('Update KYC status error:', error);
         throw createError({
             statusCode: 500,
-            statusMessage: 'Failed to update KYC Information'
+            statusMessage: error?.message || 'Failed to update Kyc information'
         });
     }
 });

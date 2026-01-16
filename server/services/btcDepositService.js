@@ -307,7 +307,7 @@ async function sweepSingleBitcoinDeposit(deposit) {
     const pair = deposit.pair;
 
     // Validate master mnemonic
-    if (!process.env.MASTER_MNEMONIC) {
+    if (!useRuntimeConfig().MASTER_MNEMONIC) {
         throw new Error('MASTER_MNEMONIC environment variable not set');
     }
 
@@ -326,7 +326,7 @@ async function sweepSingleBitcoinDeposit(deposit) {
         apiUrl: BTC_API_URL,
         fromAddress: wallet.address,
         toAddress: adminWallet.address,
-        mnemonic: process.env.MASTER_MNEMONIC,
+        mnemonic: useRuntimeConfig().MASTER_MNEMONIC,
         derivationPath: wallet.derivationPath,
         amount: deposit.amountSmallest,
         options: {

@@ -48,31 +48,35 @@ export default appErrorHandler(async (event) => {
             return sum + parseFloat(balance.balanceUsd || 0);
         }, 0);
 
-        let allocatedUsdt = '0';
-        try {
-            const { totals: { total } } = await getAllocationForPair({ userId: user._id }, "USDT");
-            allocatedUsdt = total
-        } catch {
+        let totalActiveUSDTAllocations = 0, totalUSDTAllocations = 0;
 
-        }
+        try {
+            const { totals: { total: totalActiveUSDTAllocationsResult } } = await getAllocationForPair({ userId: user._id }, "USDT", { active: true });
+            totalActiveUSDTAllocations = totalActiveUSDTAllocationsResult
+        } catch { }
+
+        try {
+            const { totals: { total: totalUSDTAllocationsResult } } = await getAllocationForPair({ userId: user._id }, "USDT");
+            totalUSDTAllocations = totalUSDTAllocationsResult;
+        } catch { }
+
 
         const Chat = getModel('Chat');
 
         const userChat = await Chat.findOne({ user: user._id }).select('messages').lean()
         const unreadMessages = userChat ? userChat.messages.filter(message => !message.seenAt).length : 0
 
-        const hasAllocations = await hasActiveAllocations({ userId: user._id })
         const userFullName = user.personalInfo?.firstName ? `${user.personalInfo?.firstName} ${user.personalInfo?.lastName || ''}` : 'Unverified User';
 
         return {
             _id: user._id,
             fullName: userFullName,
             kycStatus,
-            allocatedUsdt: Math.round(allocatedUsdt),
+            activeUSDTAllocations: Math.round(totalActiveUSDTAllocations),
+            totalUSDTAllocations: Math.round(totalUSDTAllocations),
             userStatus: user.auth.status || 'active',
             balanceUsd: Math.round(totalBalanceUsd),
             unreadMessages,
-            hasAllocations,
             biasedPositive: user.trading.biasedPositive ?? false,
             createdAt: user.createdAt,
             lastLogin: user.auth.lastLoggedInAt

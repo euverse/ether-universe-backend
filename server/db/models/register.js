@@ -47,6 +47,8 @@ const MODELS_REGISTER = {
     Log: model('Log', logSchema)
 }
 
+
+
 export const getModel = (key) => {
     if (!MODELS_REGISTER.hasOwnProperty(key)) throw Error('Model does not exist');
 

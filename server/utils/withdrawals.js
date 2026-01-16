@@ -13,7 +13,7 @@ const AdminBalance = getModel('AdminBalance');
 const Balance = getModel('Balance');
 const TradingAccount = getModel('TradingAccount');
 
-const MASTER_MNEMONIC = process.env.MASTER_MNEMONIC
+const MASTER_MNEMONIC = useRuntimeConfig().MASTER_MNEMONIC
 
 // CREATE USER WITHDRAWAL
 /**

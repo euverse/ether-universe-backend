@@ -59,7 +59,7 @@ export async function sendAdminPasswordReset(adminEmail, { resetLink }) {
 
 // Function to send credentials
 export async function sendAdminPasswordResetConfirmation(adminEmail, { ip, os, browser } = {}) {
-    const signInLink = `${runtimeConfig.public.APP_BASE_URL}/admin/auth/signin`
+    const signInLink = `${runtimeConfig.public.WWW_BASE_URL}/admin/auth/signin`
 
     const ipInfo = await $fetch('/api/ip', {
         query: {

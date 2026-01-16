@@ -1,0 +1,44 @@
+name: Deploy to VPS
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+      
+      - name: Add VPS to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+      
+      - name: Deploy to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+        run: |
+          ssh $VPS_USERNAME@$VPS_HOST << 'ENDSSH'
+            set -e
+            echo ">>> Starting deployment..."
+            cd /var/www/ether-universe/backend
+            
+            echo "--> Pulling latest changes..."
+            git pull origin main
+            
+            echo "[+] Installing dependencies..."
+            npm install
+            
+            echo "[+] Building application..."
+            npm run build
+            
+            echo "--> Restarting application..."
+            pm2 restart www.ether-universe.org
+            
+            echo "Done. Application status:"
+            pm2 status www.ether-universe.org
+          ENDSSH
