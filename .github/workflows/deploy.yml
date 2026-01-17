@@ -24,6 +24,7 @@ jobs:
         run: |
           ssh $VPS_USERNAME@$VPS_HOST << 'ENDSSH'
             set -e
+            export PATH="$HOME/.npm-global/bin:$PATH"
             echo ">>> Starting deployment..."
             cd /var/www/ether-universe/backend
             

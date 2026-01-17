@@ -3,17 +3,23 @@ export default defineEventHandler(async event => {
         const sessionUser = event.context.auth.user;
         const Notification = getModel('Notification');
 
+        console.log({
+            ...sessionUser
+        })
+
         const now = new Date();
-        const userFilter = sessionUser
-            ? { $or: [{ user: sessionUser._id }, { user: { $exists: false } }] }
-            : { user: { $exists: false } };
+        const userFilter = { $or: [{ user: sessionUser._id }, { user: { $exists: false } }] }
 
         const query = {
             readAt: null,
-            ...userFilter,
-            $or: [
-                { 'reminder.remindAt': { $exists: true, $lte: now } },
-                { 'reminder.remindAt': { $exists: false } }
+            $and: [
+                userFilter,
+                {
+                    $or: [
+                        { 'reminder.remindAt': { $exists: true, $lte: now } },
+                        { 'reminder.remindAt': { $exists: false } }
+                    ]
+                }
             ]
         };
 
