@@ -1,3 +1,6 @@
+import { resolveTradingAccount } from "../../../utils/allocation";
+import { getBalancesByPair } from "../../../utils/user-balances";
+
 export default appErrorHandler(async (event) => {
     const query = getQuery(event);
     const offset = parseInt(query.offset) || 0;
@@ -43,11 +46,6 @@ export default appErrorHandler(async (event) => {
             kycStatus = kycSubmission.status
         }
 
-        const balances = await Balance.find({ userId: user._id }).lean();
-        const totalBalanceUsd = balances.reduce((sum, balance) => {
-            return sum + parseFloat(balance.balanceUsd || 0);
-        }, 0);
-
         let totalActiveUSDTAllocations = 0, totalUSDTAllocations = 0;
 
         try {
@@ -57,8 +55,26 @@ export default appErrorHandler(async (event) => {
 
         try {
             const { totals: { total: totalUSDTAllocationsResult } } = await getAllocationForPair({ userId: user._id }, "USDT");
+
             totalUSDTAllocations = totalUSDTAllocationsResult;
         } catch { }
+
+         let userRealTradingAccount;
+
+        try {
+            userRealTradingAccount = await resolveTradingAccount({ userId: user._id })
+        } catch { }
+
+
+        let totalBalanceUsdt = 0;
+
+        if (userRealTradingAccount) {
+            const totalPairBalancesResult = await getBalancesByPair(userRealTradingAccount)
+
+            const totalBalancesUsdResult = Object.values(totalPairBalancesResult).reduce((acc, balance) => ((balance.pair?.valueUsd * balance.total) || 0) + acc, 0)
+
+            totalBalanceUsdt = totalBalancesUsdResult + totalActiveUSDTAllocations;
+        }
 
 
         const Chat = getModel('Chat');
@@ -75,7 +91,7 @@ export default appErrorHandler(async (event) => {
             activeUSDTAllocations: Math.round(totalActiveUSDTAllocations),
             totalUSDTAllocations: Math.round(totalUSDTAllocations),
             userStatus: user.auth.status || 'active',
-            balanceUsd: Math.round(totalBalanceUsd),
+            balanceUsd: Math.round(totalBalanceUsdt),
             unreadMessages,
             biasedPositive: user.trading.biasedPositive ?? false,
             createdAt: user.createdAt,
