@@ -28,7 +28,7 @@ class LogTask {
         const Log = getModel("Log")
 
         await Log.create({
-            taskId: this.taskId,
+            taskId: this.id,
             type,
             message,
             metadata
@@ -176,7 +176,7 @@ const logService = new LogService();
 const priceUpdateLogger = logService.createLogger('PRICE_UPDATE');
 
 //price data update
-const priceDataUpdateLogger = logService.createLogger('PRICE_DATA_UPDATE');
+const priceDataUpdateLogger = logService.createLogger('PRICE_DATA_UPDATE', { logToDB: true });
 const initializePriceDataLogger = priceDataUpdateLogger.createLogger('INITIALIZE');
 const updateHighPriorityPairsLogger = priceDataUpdateLogger.createLogger('HIGH_PRIORITY');
 const updateAllPairsLogger = priceDataUpdateLogger.createLogger('ALL_PAIRS');

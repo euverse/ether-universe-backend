@@ -1,6 +1,3 @@
-import { resolveTradingAccount } from "../../../utils/allocation";
-import { getBalancesByPair } from "../../../utils/user-balances";
-
 export default appErrorHandler(async (event) => {
     const query = getQuery(event);
     const offset = parseInt(query.offset) || 0;
@@ -10,7 +7,6 @@ export default appErrorHandler(async (event) => {
 
     const User = getModel('User');
     const KYCSubmission = getModel('KYCSubmission');
-    const Balance = getModel('Balance');
 
     let filter = {};
     if (search) {
@@ -59,19 +55,19 @@ export default appErrorHandler(async (event) => {
             totalUSDTAllocations = totalUSDTAllocationsResult;
         } catch { }
 
-         let userRealTradingAccount;
+        let userRealTradingAccountId;
 
         try {
-            userRealTradingAccount = await resolveTradingAccount({ userId: user._id })
+            userRealTradingAccountId = await resolveTradingAccount({ userId: user._id })
         } catch { }
 
 
         let totalBalanceUsdt = 0;
 
-        if (userRealTradingAccount) {
-            const totalPairBalancesResult = await getBalancesByPair(userRealTradingAccount)
+        if (userRealTradingAccountId) {
+            const totalPairBalancesResult = await getBalancesByPair(userRealTradingAccountId)
 
-            const totalBalancesUsdResult = Object.values(totalPairBalancesResult).reduce((acc, balance) => ((balance.pair?.valueUsd * balance.total) || 0) + acc, 0)
+            const totalBalancesUsdResult = Object.values(totalPairBalancesResult).reduce((acc, balance) => ((balance.pair?.valueUsd * balance.totals?.total) || 0) + acc, 0)
 
             totalBalanceUsdt = totalBalancesUsdResult + totalActiveUSDTAllocations;
         }
@@ -94,8 +90,7 @@ export default appErrorHandler(async (event) => {
             balanceUsd: Math.round(totalBalanceUsdt),
             unreadMessages,
             biasedPositive: user.trading.biasedPositive ?? false,
-            createdAt: user.createdAt,
-            lastLogin: user.auth.lastLoggedInAt
+            hasRealTradingAccount:!!userRealTradingAccountId
         };
     }));
 

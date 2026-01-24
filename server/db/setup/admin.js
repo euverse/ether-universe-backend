@@ -15,9 +15,6 @@ export const initialSuperAdmin = {
 };
 
 
-console.log(useRuntimeConfig().auth)
-
-
 export async function setupSuperAdmin() {
     try {
         const Admin = model('Admin');

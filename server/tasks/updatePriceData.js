@@ -44,8 +44,7 @@ const fetchCoinGeckoPriceData = async (coinId, vsCurrency, fromTimestamp, toTime
             return fetchCoinGeckoPriceData(coinId, vsCurrency, fromTimestamp, toTimestamp, retryCount + 1);
         }
 
-        const logFn = priceDataUpdateLogger?.error;
-        logFn(`CoinGecko API Error for ${coinId}: ${error.message}`);
+        priceDataUpdateLogger.error(`CoinGecko API Error for ${coinId}: ${error.message}`);
         return [];
     }
 };
@@ -75,8 +74,7 @@ const initializePairData = async (docId, pair) => {
     const oneYearAgo = now - (365 * 24 * 60 * 60);
     const sixMonths = 180 * 24 * 60 * 60;
 
-    const logFn = priceDataUpdateLogger?.log;
-    logFn(`Initializing ${pair.baseAsset}/${pair.quoteAsset}`);
+    priceDataUpdateLogger.log(`Initializing ${pair.baseAsset}/${pair.quoteAsset}`);
 
     let allPriceData = [];
     for (let start = oneYearAgo; start < now; start += sixMonths) {
@@ -87,8 +85,7 @@ const initializePairData = async (docId, pair) => {
     }
 
     if (allPriceData.length === 0) {
-        const warnFn = priceDataUpdateLogger?.warn;
-        warnFn(`No data for ${pair.baseAsset}/${pair.quoteAsset}`);
+        priceDataUpdateLogger.warn(`No data for ${pair.baseAsset}/${pair.quoteAsset}`);
         return 0;
     }
 
@@ -107,8 +104,7 @@ const initializePairData = async (docId, pair) => {
         }
     );
 
-    const successFn = priceDataUpdateLogger?.success;
-    successFn(`Initialized ${pair.baseAsset}/${pair.quoteAsset} (${aggregatedData.length} points)`);
+    priceDataUpdateLogger.success(`Initialized ${pair.baseAsset}/${pair.quoteAsset} (${aggregatedData.length} points)`);
     return aggregatedData.length;
 };
 
@@ -193,13 +189,11 @@ async function processPriceDataUpdates(options = {}) {
             .populate('pair', 'baseAsset quoteAsset');
 
         if (records.length === 0) {
-            const logFn = priceDataUpdateLogger?.log;
-            logFn(`[${logContext}] No records to process`);
+            priceDataUpdateLogger.log(`[${logContext}] No records to process`);
             return;
         }
 
-        const logFn = priceDataUpdateLogger?.log;
-        logFn(`[${logContext}] Processing ${records.length} pairs (${hasUninitialized ? 'initializing' : 'updating'})`);
+        priceDataUpdateLogger.log(`[${logContext}] Processing ${records.length} pairs (${hasUninitialized ? 'initializing' : 'updating'})`);
 
         let processedCount = 0;
         for (const record of records) {
@@ -216,22 +210,18 @@ async function processPriceDataUpdates(options = {}) {
 
                 if (pointsAdded > 0) {
                     processedCount++;
-                    const successFn = priceDataUpdateLogger?.success;
-                    successFn(`[${logContext}] ${record.pair.baseAsset}/${record.pair.quoteAsset} (+${pointsAdded} points)`);
+                    priceDataUpdateLogger.success(`[${logContext}] ${record.pair.baseAsset}/${record.pair.quoteAsset} (+${pointsAdded} points)`);
                 }
             } catch (error) {
-                const errorFn = priceDataUpdateLogger?.error;
-                errorFn(`[${logContext}] Error: ${record.pair.baseAsset}/${record.pair.quoteAsset} - ${error.message}`);
+                priceDataUpdateLogger.error(`[${logContext}] Error: ${record.pair.baseAsset}/${record.pair.quoteAsset} - ${error.message}`);
             }
 
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
-        const successFn = priceDataUpdateLogger?.success;
-        successFn(`[${logContext}] Completed: ${processedCount}/${records.length} updated`);
+        priceDataUpdateLogger.success(`[${logContext}] Completed: ${processedCount}/${records.length} updated`);
     } catch (error) {
-        const errorFn = priceDataUpdateLogger?.error;
-        errorFn(`[${logContext}] Task error: ${error.message}`);
+        priceDataUpdateLogger.error(`[${logContext}] Task error: ${error.message}`);
     }
 }
 
@@ -249,9 +239,7 @@ export async function initializePriceDataTasks(agenda) {
         '30 minutes'
     );
 
-    if (priceDataUpdateLogger?.initialize) {
-        priceDataUpdateLogger.initialize({ frequency: '30 minutes', task: 'PRIORITY' });
-    }
+    priceDataUpdateLogger.initialize({ frequency: '30 minutes', task: 'PRIORITY' });
 
     await initializeRecurringJob(
         agenda,
@@ -265,7 +253,5 @@ export async function initializePriceDataTasks(agenda) {
         '2 hours'
     );
 
-    if (priceDataUpdateLogger?.initialize) {
-        priceDataUpdateLogger.initialize({ frequency: '2 hours', task: 'ALL' });
-    }
+    priceDataUpdateLogger.initialize({ frequency: '2 hours', task: 'ALL' });
 }
