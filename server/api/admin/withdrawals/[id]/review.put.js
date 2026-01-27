@@ -32,12 +32,12 @@ export default defineEventHandler(async (event) => {
         };
 
     } catch (error) {
-        if (error.statusCode) throw error;
+        if (error?.statusCode) throw error;
 
         console.error('Update withdrawal status error:', error);
         throw createError({
             statusCode: 500,
-            statusMessage: 'Failed to update withdrawal status'
+            statusMessage: error?.message || 'Failed to update withdrawal status'
         });
     }
 });
