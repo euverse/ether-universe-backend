@@ -38,8 +38,8 @@ jobs:
             npm run build
             
             echo "--> Restarting application..."
-            pm2 restart www.ether-universe.org
+            pm2 restart api.ether-universe.org
             
             echo "Done. Application status:"
-            pm2 status www.ether-universe.org
+            pm2 status api.ether-universe.org
           ENDSSH
