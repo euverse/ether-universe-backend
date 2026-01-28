@@ -196,6 +196,7 @@ export async function approveUserWithdrawal(withdrawalId, adminId) {
       isIrreversible: true
     },
     {
+      returnAs: 'withdrawal',
       action: async ({ txResult }) => {
         withdrawal.status = WITHDRAWAL_STATUSES.PROCESSING;
         withdrawal.reviewedBy = adminId;
@@ -215,6 +216,7 @@ export async function approveUserWithdrawal(withdrawalId, adminId) {
 
     return withdrawal;
   } catch (error) {
+    console.error(error)
     const { failError = {} } = error;
 
     // If blockchain transaction fails, withdrawal remains PENDING
@@ -232,7 +234,7 @@ export async function rejectUserWithdrawal(
   withdrawalId,
   adminId,
   rejectionReason,
-  rejectionDetails = []
+  rejectionDetails
 ) {
   const withdrawal = await UserWithdrawal.findById(withdrawalId)
     .populate("pair");
@@ -254,6 +256,7 @@ export async function rejectUserWithdrawal(
       remedy: revertUnlockUserBalances
     },
     {
+      returnAs: 'withdrawal',
       action: async () => {
         withdrawal.status = WITHDRAWAL_STATUSES.REJECTED;
         withdrawal.reviewedBy = adminId;
@@ -261,20 +264,19 @@ export async function rejectUserWithdrawal(
         withdrawal.rejectionReason = rejectionReason;
         withdrawal.rejectionDetails = rejectionDetails;
 
-        await withdrawal.save();
+        return await withdrawal.save();
       }
     }
   ]
 
 
   try {
-    const { resultMap } = Transact(rejectUserWithdrawalOpers)
+    const { resultMap } = await Transact(rejectUserWithdrawalOpers)
 
     const { withdrawal } = resultMap;
 
     return withdrawal;
   } catch (error) {
-
     const { failError } = error || {}
 
     throw failError;
