@@ -30,5 +30,5 @@ export async function startAgenda() {
   await agenda.start();
   console.log('Agenda started');
 
-  await agenda.db.collection.updateMany({ lockedAt: { $exists: true, $ne: null } }, { $unset: { lockedAt: '' } });
+  await agenda._collection.updateMany({ lockedAt: { $exists: true, $ne: null } }, { $unset: { lockedAt: '' } });
 }
