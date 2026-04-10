@@ -236,7 +236,8 @@ export async function initializePriceDataTasks(agenda) {
                 logContext: 'PRIORITY'
             });
         },
-        '30 minutes'
+        '30 minutes',
+        { dontRun: true }
     );
 
     priceDataUpdateLogger.initialize({ frequency: '30 minutes', task: 'PRIORITY' });
@@ -250,7 +251,8 @@ export async function initializePriceDataTasks(agenda) {
                 logContext: 'ALL'
             });
         },
-        '2 hours'
+        '2 hours',
+        { dontRun: true }
     );
 
     priceDataUpdateLogger.initialize({ frequency: '2 hours', task: 'ALL' });
