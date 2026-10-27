@@ -44,6 +44,12 @@ const tradingAccountSchema = new Schema({
     type: Boolean,
     default: true
   },
+  // Per-account mutex for /convert — prevents a second conversion from
+  // starting while one is already in flight for this account.
+  convertLockExpiresAt: {
+    type: Date,
+    default: null
+  },
 }, {
   timestamps: true
 });

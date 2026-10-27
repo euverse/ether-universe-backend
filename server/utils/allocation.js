@@ -127,7 +127,7 @@ export async function resolveTradingAccount({ tradingAccountId, userId }) {
  * Get allocation stats for a specific pair in a trading account
  * Returns human-readable amounts
  */
-export async function getAllocationForPair({ tradingAccountId, userId }, baseAsset, { active = true } = {}) {
+export async function getAllocationForPair({ tradingAccountId, userId }, baseAsset, { active = true, session } = {}) {
     const resolvedAccountId = await resolveTradingAccount({ tradingAccountId, userId });
 
     const pair = await Pair.findOne({ baseAsset });
@@ -143,7 +143,7 @@ export async function getAllocationForPair({ tradingAccountId, userId }, baseAss
         ...(active && {
             expiresAt: { $gt: new Date() }
         })
-    }).sort({ expiresAt: 1 }); // Sort by expiry (oldest first)
+    }).session(session).sort({ expiresAt: 1 }); // Sort by expiry (oldest first)
 
     if (allocations.length === 0) {
         return {
@@ -413,7 +413,8 @@ export async function unlockAllocations(baseAsset, distributions) {
 export async function deductFromAllocations(
     tradingAccountId,
     baseAsset,
-    amount // human-readable
+    amount, // human-readable
+    { session } = {}
 ) {
     validatePositiveAmount(amount, 'amount');
 
@@ -428,7 +429,7 @@ export async function deductFromAllocations(
     const allocations = await AssetAllocation.find({
         tradingAccount: tradingAccountId,
         pair: pair._id
-    }).sort({ expiresAt: 1 }); // Sort by expiry (oldest first)
+    }).session(session).sort({ expiresAt: 1 }); // Sort by expiry (oldest first)
 
     if (allocations.length === 0) {
         throw new Error(`No allocation records found for pair: ${baseAsset}`);

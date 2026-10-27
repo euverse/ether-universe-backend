@@ -155,7 +155,8 @@ export async function removeUserWithdrawalFromAggregateTotal(
 ) {
     const {
         sourceNetwork = null,
-        prioritizeBalances = false // if true, withdraw from balances first
+        prioritizeBalances = false, // if true, withdraw from balances first
+        session
     } = options;
 
     const Pair = getModel("Pair")
@@ -172,9 +173,10 @@ export async function removeUserWithdrawalFromAggregateTotal(
     // Get available amounts from both sources
     const allocationStats = await getAllocationForPair(
         { tradingAccountId, userId: null },
-        baseAsset
+        baseAsset,
+        { session }
     );
-    const balanceStats = await getTotalBalanceForPair(tradingAccountId, baseAsset);
+    const balanceStats = await getTotalBalanceForPair(tradingAccountId, baseAsset, { session });
 
     const allocationAvailable = allocationStats.totals.available;
     const balanceAvailable = balanceStats.totals.available;
@@ -228,7 +230,8 @@ export async function removeUserWithdrawalFromAggregateTotal(
             result.fromAllocations = await deductFromAllocations(
                 tradingAccountId,
                 baseAsset,
-                toWithdrawReadable
+                toWithdrawReadable,
+                { session }
             );
             result.summary.allocationsUsed = toWithdrawReadable;
         } else {
@@ -236,7 +239,8 @@ export async function removeUserWithdrawalFromAggregateTotal(
                 tradingAccountId,
                 baseAsset,
                 toWithdrawReadable,
-                sourceNetwork
+                sourceNetwork,
+                { session }
             );
             result.summary.balancesUsed = toWithdrawReadable;
         }

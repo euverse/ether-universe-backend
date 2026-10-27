@@ -141,7 +141,7 @@ export async function getBalancesByPair(tradingAccountId, { includeZeroBalances 
  * Get total balance for a specific pair across all networks
  * Returns human-readable amounts
  */
-export async function getTotalBalanceForPair(tradingAccountId, baseAsset) {
+export async function getTotalBalanceForPair(tradingAccountId, baseAsset, { session } = {}) {
   const pair = await Pair.findOne({ baseAsset });
   if (!pair) {
     throw Error(`Pair ${baseAsset} not found`)
@@ -149,13 +149,13 @@ export async function getTotalBalanceForPair(tradingAccountId, baseAsset) {
 
   validateDecimals(pair.decimals);
 
-  const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();
+  const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').session(session).lean();
   const walletIds = wallets.map(w => w._id);
 
   const balances = await Balance.find({
     wallet: { $in: walletIds },
     pair: pair._id
-  }).populate('pair');
+  }).session(session).populate('pair');
 
   // Calculate totals in smallest units
   let totalInitial = '0';
@@ -225,7 +225,7 @@ export async function addUserDeposit(
   baseAsset,
   amount, // human-readable
   targetNetwork = null,
-  { preDeposited = false } = {}
+  { preDeposited = false, session } = {}
 ) {
   validatePositiveAmount(amount, 'amount');
 
@@ -238,7 +238,7 @@ export async function addUserDeposit(
 
   const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
-  const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();;
+  const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').session(session).lean();
   const walletIds = wallets.map(w => w._id);
 
   const balance = await Balance.findOne({
@@ -247,7 +247,7 @@ export async function addUserDeposit(
     ...(targetNetwork && {
       network: targetNetwork
     })
-  });
+  }).session(session);
 
   if (!balance) {
     throw new Error(`No balance record found for network: ${targetNetwork}`);
@@ -261,7 +261,7 @@ export async function addUserDeposit(
   balance.totalDeposited = add(balance.totalDeposited, amountSmallest);
   balance.lastDepositAt = new Date();
 
-  await balance.save();
+  await balance.save({ session });
 
   return {
     network: targetNetwork,
@@ -343,7 +343,8 @@ export async function removeUserWithdrawalFromBalances(
   tradingAccountId,
   baseAsset,
   amount, // human-readable
-  sourceNetwork = null
+  sourceNetwork = null,
+  { session } = {}
 ) {
 
 
@@ -359,13 +360,13 @@ export async function removeUserWithdrawalFromBalances(
 
     const amountSmallest = toSmallestUnit(amount, pair.decimals);
 
-    const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').lean();
+    const wallets = await Wallet.find({ tradingAccount: tradingAccountId }).select('_id').session(session).lean();
     const walletIds = wallets.map(w => w._id);
 
     let balances = await Balance.find({
       wallet: { $in: walletIds },
       pair: pair._id,
-    }).sort({ available: -1 });
+    }).session(session).sort({ available: -1 });
 
     if (balances.length === 0) {
       throw new Error(`No balance records found for pair: ${baseAsset}`);
@@ -392,7 +393,7 @@ export async function removeUserWithdrawalFromBalances(
       balance.totalWithdrawn = add(balance.totalWithdrawn, amountSmallest);
       balance.lastWithdrawalAt = new Date();
 
-      await balance.save();
+      await balance.save({ session });
 
       removed.push({
         network: sourceNetwork,
@@ -421,7 +422,7 @@ export async function removeUserWithdrawalFromBalances(
 
         balance.lastWithdrawalAt = new Date();
 
-        await balance.save();
+        await balance.save({ session });
 
         removed.push({
           balanceId: balance._id,
