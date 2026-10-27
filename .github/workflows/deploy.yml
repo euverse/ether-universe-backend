@@ -21,8 +21,14 @@ jobs:
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+          BACKEND_ENV_FILE: ${{ secrets.BACKEND_ENV_FILE }}
         run: |
-          ssh $VPS_USERNAME@$VPS_HOST << 'ENDSSH'
+          if [ -z "$BACKEND_ENV_FILE" ]; then
+            echo "BACKEND_ENV_FILE secret is empty or missing; refusing to overwrite the server .env"
+            exit 1
+          fi
+          ENV_B64=$(printf '%s' "$BACKEND_ENV_FILE" | base64 -w0)
+          ssh $VPS_USERNAME@$VPS_HOST "ENV_B64='$ENV_B64' bash -s" << 'ENDSSH'
             set -e
             export PATH="$HOME/.npm-global/bin:$PATH"
             echo ">>> Starting deployment..."
@@ -30,7 +36,11 @@ jobs:
             
             echo "--> Pulling latest changes..."
             git pull origin main
-            
+
+            echo "--> Writing .env from secret..."
+            echo "$ENV_B64" | base64 -d > .env
+            chmod 600 .env
+
             echo "[+] Installing dependencies..."
             npm install
             
