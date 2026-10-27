@@ -17,6 +17,56 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
       
+      - name: Install Cloudflare origin certificate
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+          CF_ORIGIN_CERT: ${{ secrets.CF_ORIGIN_CERT }}
+          CF_ORIGIN_KEY: ${{ secrets.CF_ORIGIN_KEY }}
+        run: |
+          if [ -z "$CF_ORIGIN_CERT" ] && [ -z "$CF_ORIGIN_KEY" ]; then
+            echo "CF_ORIGIN_CERT and CF_ORIGIN_KEY not set; skipping origin certificate install"
+            exit 0
+          fi
+          if [ -z "$CF_ORIGIN_CERT" ] || [ -z "$CF_ORIGIN_KEY" ]; then
+            echo "Only one of CF_ORIGIN_CERT / CF_ORIGIN_KEY is set; refusing to install a partial pair"
+            exit 1
+          fi
+          CERT_B64=$(printf '%s\n' "$CF_ORIGIN_CERT" | base64 -w0)
+          KEY_B64=$(printf '%s\n' "$CF_ORIGIN_KEY" | base64 -w0)
+          ssh $VPS_USERNAME@$VPS_HOST "CERT_B64='$CERT_B64' KEY_B64='$KEY_B64' bash -s" << 'ENDSSH'
+            set -e
+            TMP=$(mktemp -d)
+            trap 'rm -rf "$TMP"' EXIT
+            umask 077
+            echo "$CERT_B64" | base64 -d > "$TMP/cert.pem"
+            echo "$KEY_B64" | base64 -d > "$TMP/key.pem"
+
+            echo "--> Checking certificate and key match..."
+            CERT_PUB=$(openssl x509 -in "$TMP/cert.pem" -noout -pubkey | openssl sha256)
+            KEY_PUB=$(openssl pkey -in "$TMP/key.pem" -pubout | openssl sha256)
+            if [ "$CERT_PUB" != "$KEY_PUB" ]; then
+              echo "Origin certificate and key do not match; leaving the installed pair untouched"
+              exit 1
+            fi
+
+            echo "--> Installing origin certificate..."
+            sudo -n cp -a /etc/ssl/cf-origin.pem "$TMP/cert.bak" 2>/dev/null || true
+            sudo -n cp -a /etc/ssl/cf-origin.key "$TMP/key.bak" 2>/dev/null || true
+            sudo -n install -m 644 -o root -g root "$TMP/cert.pem" /etc/ssl/cf-origin.pem
+            sudo -n install -m 600 -o root -g root "$TMP/key.pem" /etc/ssl/cf-origin.key
+
+            if sudo -n nginx -t; then
+              sudo -n systemctl reload nginx
+              echo "Origin certificate installed and nginx reloaded"
+            else
+              echo "nginx -t failed, restoring previous certificate"
+              [ -f "$TMP/cert.bak" ] && sudo -n cp -a "$TMP/cert.bak" /etc/ssl/cf-origin.pem
+              [ -f "$TMP/key.bak" ] && sudo -n cp -a "$TMP/key.bak" /etc/ssl/cf-origin.key
+              exit 1
+            fi
+          ENDSSH
+
       - name: Deploy to VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
