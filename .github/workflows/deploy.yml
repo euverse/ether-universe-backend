@@ -103,7 +103,9 @@ jobs:
             npm run build
             
             echo "--> Restarting application..."
-            pm2 restart api.ether-universe.org
+            set -a && . ./.env && set +a
+            pm2 restart api.ether-universe.org --update-env
+            pm2 save
             
             echo "Done. Application status:"
             pm2 status api.ether-universe.org
