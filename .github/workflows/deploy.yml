@@ -36,6 +36,11 @@ jobs:
           KEY_B64=$(printf '%s\n' "$CF_ORIGIN_KEY" | base64 -w0)
           ssh $VPS_USERNAME@$VPS_HOST "CERT_B64='$CERT_B64' KEY_B64='$KEY_B64' bash -s" << 'ENDSSH'
             set -e
+            DIR=/etc/ssl/ether-universe
+            if [ ! -w "$DIR" ]; then
+              echo "$DIR is missing or not writable by $(whoami); run the one-time VPS setup first"
+              exit 1
+            fi
             TMP=$(mktemp -d)
             trap 'rm -rf "$TMP"' EXIT
             umask 077
@@ -51,18 +56,18 @@ jobs:
             fi
 
             echo "--> Installing origin certificate..."
-            sudo -n cp -a /etc/ssl/cf-origin.pem "$TMP/cert.bak" 2>/dev/null || true
-            sudo -n cp -a /etc/ssl/cf-origin.key "$TMP/key.bak" 2>/dev/null || true
-            sudo -n install -m 644 -o root -g root "$TMP/cert.pem" /etc/ssl/cf-origin.pem
-            sudo -n install -m 600 -o root -g root "$TMP/key.pem" /etc/ssl/cf-origin.key
+            [ -f "$DIR/cf-origin.pem" ] && cp -a "$DIR/cf-origin.pem" "$TMP/cert.bak"
+            [ -f "$DIR/cf-origin.key" ] && cp -a "$DIR/cf-origin.key" "$TMP/key.bak"
+            install -m 644 "$TMP/cert.pem" "$DIR/cf-origin.pem"
+            install -m 600 "$TMP/key.pem" "$DIR/cf-origin.key"
 
-            if sudo -n nginx -t; then
-              sudo -n systemctl reload nginx
+            if sudo -n /usr/sbin/nginx -t; then
+              sudo -n /usr/bin/systemctl reload nginx
               echo "Origin certificate installed and nginx reloaded"
             else
               echo "nginx -t failed, restoring previous certificate"
-              [ -f "$TMP/cert.bak" ] && sudo -n cp -a "$TMP/cert.bak" /etc/ssl/cf-origin.pem
-              [ -f "$TMP/key.bak" ] && sudo -n cp -a "$TMP/key.bak" /etc/ssl/cf-origin.key
+              [ -f "$TMP/cert.bak" ] && cp -a "$TMP/cert.bak" "$DIR/cf-origin.pem"
+              [ -f "$TMP/key.bak" ] && cp -a "$TMP/key.bak" "$DIR/cf-origin.key"
               exit 1
             fi
           ENDSSH
