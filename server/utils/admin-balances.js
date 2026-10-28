@@ -206,17 +206,17 @@ export async function addAdminBalance(baseAsset, amount, targetNetwork) {
         throw new Error(`No admin balance found for ${baseAsset} on ${targetNetwork}`);
     }
 
-    balance.available = add(balance.available, amountSmallest);
-    balance.totalSweptIn = add(balance.totalSweptIn, amountSmallest);
-    balance.lastSweepAt = new Date();
-
-    await balance.save();
+    const updated = await casUpdate(AdminBalance, balance._id, ['available', 'totalSweptIn'], (current) => ({
+        available: add(current.available, amountSmallest),
+        totalSweptIn: add(current.totalSweptIn, amountSmallest),
+        lastSweepAt: new Date()
+    }));
 
     return {
         baseAsset,
         network: targetNetwork,
         amount: toReadableUnit(amountSmallest, pair.decimals),
-        newAvailable: toReadableUnit(balance.available, pair.decimals),
+        newAvailable: toReadableUnit(updated.available, pair.decimals),
         balanceId: balance._id
     };
 }
@@ -275,18 +275,22 @@ export async function deductAdminBalance(
                 );
             }
 
-            balance.available = subtract(balance.available, amountSmallest);
-
-            if (withdrawalType === WITHDRAWAL_TYPES.USER) {
-                balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, amountSmallest);
-            } else {
-                balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, amountSmallest);
-            }
-
             const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
-            balance.lastWithdrawalAt = new Date();
+            const totalField = withdrawalType === WITHDRAWAL_TYPES.USER ? 'totalWithdrawnToUsers' : 'totalWithdrawnToAdmin';
 
-            await balance.save();
+            await casUpdate(AdminBalance, balance._id, ['available', totalField], (current) => {
+                if (!isGreaterOrEqual(current.available, amountSmallest)) {
+                    throw new Error(
+                        `Insufficient admin balance on ${sourceNetwork}. Available: ${toReadableUnit(current.available, pair.decimals)}, Required: ${amount}`
+                    );
+                }
+
+                return {
+                    available: subtract(current.available, amountSmallest),
+                    [totalField]: add(current[totalField], amountSmallest),
+                    lastWithdrawalAt: new Date()
+                };
+            });
 
             deducted.push({
                 network: sourceNetwork,
@@ -306,20 +310,25 @@ export async function deductAdminBalance(
 
                 if (compare(balance.available, '0') <= 0) continue;
 
-                const toDeduct = min(balance.available, remaining);
-
-                balance.available = subtract(balance.available, toDeduct);
-
-                if (withdrawalType === 'user') {
-                    balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, toDeduct);
-                } else {
-                    balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, toDeduct);
-                }
-
                 const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
-                balance.lastWithdrawalAt = new Date();
+                const totalField = withdrawalType === 'user' ? 'totalWithdrawnToUsers' : 'totalWithdrawnToAdmin';
 
-                await balance.save();
+                // Recomputed against fresh values on every retry, so the amount taken
+                // reflects what is actually available when the write lands.
+                let toDeduct = '0';
+                const lastWithdrawalAt = new Date();
+
+                await casUpdate(AdminBalance, balance._id, ['available', totalField], (current) => {
+                    toDeduct = min(current.available, remaining);
+
+                    return {
+                        available: subtract(current.available, toDeduct),
+                        [totalField]: add(current[totalField], toDeduct),
+                        lastWithdrawalAt
+                    };
+                });
+
+                if (compare(toDeduct, '0') <= 0) continue;
 
                 deducted.push({
                     balanceId: balance._id,
@@ -327,7 +336,7 @@ export async function deductAdminBalance(
                     amountSmallest: toDeduct,
                     amount: toReadableUnit(toDeduct, pair.decimals),
                     prevLastWithdrawalAt,
-                    lastWithdrawalAt: balance.lastWithdrawalAt
+                    lastWithdrawalAt
                 });
 
                 remaining = subtract(remaining, toDeduct);
@@ -410,17 +419,42 @@ export async function lockAdminBalance(baseAsset, amount, preferredNetwork = nul
         );
     }
 
-    // PHASE 3: Now apply all locks (we know we have enough)
-    for (const planned of plannedLocks) {
-        const balance = await AdminBalance.findById(planned.balanceId);
-        if (!balance) {
-            throw new Error(`AdminBalance ${planned.balanceId} not found`);
+    // PHASE 3: Apply each lock atomically. The plan was computed from a snapshot,
+    // so every lock re-checks availability at write time; if one fails, the locks
+    // already applied are released again so no funds are left stranded.
+    const appliedLocks = [];
+
+    try {
+        for (const planned of plannedLocks) {
+            const updated = await casUpdate(AdminBalance, planned.balanceId, ['available', 'locked'], (current) => {
+                if (!isGreaterOrEqual(current.available, planned.amount)) {
+                    throw new Error(
+                        `Insufficient admin balance. Required: ${amount}, balance ${planned.balanceId} changed during locking`
+                    );
+                }
+
+                return {
+                    available: subtract(current.available, planned.amount),
+                    locked: add(current.locked, planned.amount),
+                    lastLockedAt: new Date()
+                };
+            });
+
+            if (!updated) {
+                throw new Error(`AdminBalance ${planned.balanceId} not found`);
+            }
+
+            appliedLocks.push(planned);
+        }
+    } catch (error) {
+        for (const applied of appliedLocks) {
+            await casUpdate(AdminBalance, applied.balanceId, ['available', 'locked'], (current) => ({
+                available: add(current.available, applied.amount),
+                locked: max('0', subtract(current.locked, applied.amount))
+            }));
         }
 
-        balance.available = subtract(balance.available, planned.amount);
-        balance.locked = add(balance.locked, planned.amount);
-        balance.lastLockedAt = new Date();
-        await balance.save();
+        throw error;
     }
 
     return {
@@ -454,25 +488,36 @@ export async function unlockAdminBalance(baseAsset, distributions) {
 
     for (const dist of distributions) {
         try {
-            const balance = await AdminBalance.findById(dist.balanceId);
-            if (!balance) {
+            let lockedShort = null;
+
+            const updated = await casUpdate(AdminBalance, dist.balanceId, ['available', 'locked'], (current) => {
+                // Verify sufficient locked balance
+                if (!isGreaterOrEqual(current.locked, dist.amount)) {
+                    lockedShort = current.locked;
+                    return null;
+                }
+
+                lockedShort = null;
+
+                return {
+                    locked: subtract(current.locked, dist.amount),
+                    available: add(current.available, dist.amount),
+                    lastUnlockedAt: new Date()
+                };
+            });
+
+            if (!updated) {
                 errors.push(`AdminBalance ${dist.balanceId} not found - funds may be permanently locked`);
                 continue;
             }
 
-            // Verify sufficient locked balance
-            if (!isGreaterOrEqual(balance.locked, dist.amount)) {
+            if (lockedShort !== null) {
                 errors.push(
                     `Insufficient locked balance ${dist.balanceId}. ` +
-                    `Locked: ${balance.locked}, Attempting to unlock: ${dist.amount}`
+                    `Locked: ${lockedShort}, Attempting to unlock: ${dist.amount}`
                 );
                 continue;
             }
-
-            balance.locked = subtract(balance.locked, dist.amount);
-            balance.available = add(balance.available, dist.amount);
-            balance.lastUnlockedAt = new Date();
-            await balance.save();
 
             totalUnlocked = add(totalUnlocked, dist.amount);
         } catch (error) {
@@ -515,32 +560,37 @@ export async function finalizeLockedAdminBalance(baseAsset, distributions, withd
 
     for (const dist of distributions) {
         try {
-            const balance = await AdminBalance.findById(dist.balanceId);
-            if (!balance) {
+            const totalField = withdrawalType === 'user' ? 'totalWithdrawnToUsers' : 'totalWithdrawnToAdmin';
+            let lockedShort = null;
+
+            const updated = await casUpdate(AdminBalance, dist.balanceId, ['locked', totalField], (current) => {
+                // Verify sufficient locked balance
+                if (!isGreaterOrEqual(current.locked, dist.amount)) {
+                    lockedShort = current.locked;
+                    return null;
+                }
+
+                lockedShort = null;
+
+                return {
+                    locked: subtract(current.locked, dist.amount),
+                    [totalField]: add(current[totalField], dist.amount),
+                    lastWithdrawalAt: new Date()
+                };
+            });
+
+            if (!updated) {
                 errors.push(`AdminBalance ${dist.balanceId} not found - funds may be permanently locked`);
                 continue;
             }
 
-            // Verify sufficient locked balance
-            if (!isGreaterOrEqual(balance.locked, dist.amount)) {
+            if (lockedShort !== null) {
                 errors.push(
                     `Insufficient locked balance ${dist.balanceId}. ` +
-                    `Locked: ${balance.locked}, Attempting to finalize: ${dist.amount}`
+                    `Locked: ${lockedShort}, Attempting to finalize: ${dist.amount}`
                 );
                 continue;
             }
-
-            balance.locked = subtract(balance.locked, dist.amount);
-
-            if (withdrawalType === 'user') {
-                balance.totalWithdrawnToUsers = add(balance.totalWithdrawnToUsers, dist.amount);
-            } else {
-                balance.totalWithdrawnToAdmin = add(balance.totalWithdrawnToAdmin, dist.amount);
-            }
-
-            balance.lastWithdrawalAt = new Date();
-
-            await balance.save();
 
             totalFinalized = add(totalFinalized, dist.amount);
         } catch (error) {

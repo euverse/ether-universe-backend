@@ -171,24 +171,21 @@ export async function distributeLoss(
 
     for (const dist of validDistributions) {
         try {
-            const allocation = await AssetAllocation.findById(dist.allocationId);
+            // Calculate proportional share of the loss
+            const proportion = calculateProportion(dist.amount, totalLocked);
+            const lossShare = multiply(lossSmallest, proportion);
+
+            const allocation = await casUpdate(AssetAllocation, dist.allocationId, ['available', 'total'], (current) => ({
+                // Deduct from available (losses always reduce available)
+                available: max(subtract(current.available, lossShare), '0'),
+                // Update total as well
+                total: max(subtract(current.total, lossShare), '0')
+            }));
 
             if (!allocation) {
                 errors.push(`Allocation ${dist.allocationId} not found`);
                 continue;
             }
-
-            // Calculate proportional share of the loss
-            const proportion = calculateProportion(dist.amount, totalLocked);
-            const lossShare = multiply(lossSmallest, proportion);
-
-            // Deduct from available (losses always reduce available)
-            allocation.available = max(subtract(allocation.available, lossShare), '0');
-
-            // Update total as well
-            allocation.total = max(subtract(allocation.total, lossShare), '0');
-
-            await allocation.save();
 
             totalDistributed = add(totalDistributed, lossShare);
             processed.push({
@@ -243,27 +240,24 @@ export async function distributePnL(
 
     for (const dist of distributions) {
         try {
-            const balance = await Balance.findById(dist.balanceId);
-            if (!balance) {
-                errors.push(`Balance ${dist.balanceId} not found`);
-                continue;
-            }
-
             // Calculate proportional share - multiply already handles rounding
             const proportion = calculateProportion(dist.amount, totalLocked);
             const pnLShare = multiply(pnLSmallest, proportion);
 
+            const balance = await casUpdate(Balance, dist.balanceId, ['available', 'totalPnL'], (current) => ({
+                available: isProfit
+                    ? add(current.available, pnLShare)
+                    : subtract(current.available, pnLShare),
+                totalPnL: isProfit
+                    ? add(current.totalPnL, pnLShare)
+                    : subtract(current.totalPnL, pnLShare),
+                lastSettledAt: new Date()
+            }));
 
-            if (isProfit) {
-                balance.available = add(balance.available, pnLShare);
-                balance.totalPnL = add(balance.totalPnL, pnLShare);
-            } else {
-                balance.available = subtract(balance.available, pnLShare);
-                balance.totalPnL = subtract(balance.totalPnL, pnLShare);
+            if (!balance) {
+                errors.push(`Balance ${dist.balanceId} not found`);
+                continue;
             }
-
-            balance.lastSettledAt = new Date();
-            await balance.save();
 
             totalDistributed = add(totalDistributed, pnLShare);
 

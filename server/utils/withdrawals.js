@@ -596,32 +596,24 @@ async function executeBtcWithdrawal({
 async function revertDeductAdminBalance(deductions = []) {
 
   let revertions = []
-  for (const deducted of deductions) {
+
+  // deductAdminBalance returns a single { withdrawalType, distributions } object
+  for (const deducted of [].concat(deductions)) {
 
     const { distributions, withdrawalType } = deducted;
-
-    const balances = await AdminBalance.find({
-      _id: { $in: distributions.map(d => d.balanceId) }
-    });
-
+    const totalField = withdrawalType === WITHDRAWAL_TYPES.USER ? 'totalWithdrawnToUsers' : 'totalWithdrawnToAdmin';
 
     const distRevertions = await Promise.all(
-      distributions.map(dist => {
-        const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
-        if (!balance) return null;
-
-        balance.available = add(balance.available, dist.amountSmallest);
-        if (withdrawalType === WITHDRAWAL_TYPES.USER) {
-          balance.totalWithdrawnToUsers = max('0', subtract(balance.totalWithdrawnToUsers, dist.amountSmallest));
-        } else {
-          balance.totalWithdrawnToAdmin = max('0', subtract(balance.totalWithdrawnToAdmin, dist.amountSmallest));
-        }
-        balance.lastWithdrawalAt = dist.prevLastWithdrawalAt || undefined;
-        return balance.save();
-      }).filter(Boolean)
+      distributions.map(dist =>
+        casUpdate(AdminBalance, dist.balanceId, ['available', totalField], (current) => ({
+          available: add(current.available, dist.amountSmallest),
+          [totalField]: max('0', subtract(current[totalField], dist.amountSmallest)),
+          lastWithdrawalAt: dist.prevLastWithdrawalAt || undefined
+        }))
+      )
     );
 
-    revertions = revertions.concat(distRevertions)
+    revertions = revertions.concat(distRevertions.filter(Boolean))
   }
 
   return revertions;
@@ -629,39 +621,30 @@ async function revertDeductAdminBalance(deductions = []) {
 
 async function revertUnlockUserBalances(actionReturn) {
   const { unlockedDistributions } = actionReturn;
-  const balances = await Balance.find({
-    _id: { $in: unlockedDistributions.map(dist => dist.balanceId) }
-  });
 
-  return await Promise.all(unlockedDistributions.map(dist => {
-    const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
-    if (!balance) return;
+  const revertions = await Promise.all(unlockedDistributions.map(dist =>
+    casUpdate(Balance, dist.balanceId, ['available', 'locked'], (current) => ({
+      locked: add(current.locked, dist.amount),
+      available: max('0', subtract(current.available, dist.amount)),
+      lastUnlockedAt: dist.prevLastUnlockedAt || undefined
+    }))
+  ));
 
-    balance.locked = add(balance.locked, dist.amount);
-    balance.available = max('0', subtract(balance.available, dist.amount));
-    balance.lastUnlockedAt = dist.prevLastUnlockedAt || undefined;
-    return balance.save();
-  }).filter(Boolean));
+  return revertions.filter(Boolean);
 }
 
 async function revertRemoveUserWithdrawalFromBalances(actionReturn) {
   const { distributions } = actionReturn;
 
-  const balances = await Balance.find({
-    _id: { $in: distributions.map(d => d.balanceId) }
-  });
+  const revertions = await Promise.all(distributions.map(dist =>
+    casUpdate(Balance, dist.balanceId, ['available', 'totalWithdrawn'], (current) => ({
+      available: add(current.available, dist.amountSmallest),
+      totalWithdrawn: max('0', subtract(current.totalWithdrawn, dist.amountSmallest)),
+      lastWithdrawalAt: dist.prevLastWithdrawalAt || undefined
+    }))
+  ));
 
-  return await Promise.all(
-    distributions.map(dist => {
-      const balance = balances.find(b => b._id.toString() === dist.balanceId.toString());
-      if (!balance) return null;
-
-      balance.available = add(balance.available, dist.amountSmallest);
-      balance.totalWithdrawn = max('0', subtract(balance.totalWithdrawn, dist.amountSmallest));
-      balance.lastWithdrawalAt = dist.prevLastWithdrawalAt || undefined;
-      return balance.save();
-    }).filter(Boolean)
-  );
+  return revertions.filter(Boolean);
 }
 
 

@@ -253,15 +253,12 @@ export async function addUserDeposit(
     throw new Error(`No balance record found for network: ${targetNetwork}`);
   }
 
-  if (preDeposited) {
-    balance.initial = add(balance.initial, amountSmallest);
-  }
-
-  balance.available = add(balance.available, amountSmallest);
-  balance.totalDeposited = add(balance.totalDeposited, amountSmallest);
-  balance.lastDepositAt = new Date();
-
-  await balance.save({ session });
+  await casUpdate(Balance, balance._id, ['initial', 'available', 'totalDeposited'], (current) => ({
+    ...(preDeposited && { initial: add(current.initial, amountSmallest) }),
+    available: add(current.available, amountSmallest),
+    totalDeposited: add(current.totalDeposited, amountSmallest),
+    lastDepositAt: new Date()
+  }), { session });
 
   return {
     network: targetNetwork,
@@ -311,21 +308,24 @@ export async function addTradingAccountPnL(
   }
 
   // Apply PnL to available and totalPnL
-  if (isProfit) {
-    balance.available = add(balance.available, amountSmallest);
-    balance.totalPnL = add(balance.totalPnL, amountSmallest);
-  } else {
-    // For losses, drain to 0 if insufficient balance (negative balance protection)
-    if (isGreaterOrEqual(amountSmallest, balance.available)) {
-      balance.available = '0';
-    } else {
-      balance.available = subtract(balance.available, amountSmallest);
+  await casUpdate(Balance, balance._id, ['available', 'totalPnL'], (current) => {
+    if (isProfit) {
+      return {
+        available: add(current.available, amountSmallest),
+        totalPnL: add(current.totalPnL, amountSmallest),
+        lastSettledAt: new Date()
+      };
     }
-    balance.totalPnL = subtract(balance.totalPnL, amountSmallest);
-  }
 
-  balance.lastSettledAt = new Date();
-  await balance.save();
+    // For losses, drain to 0 if insufficient balance (negative balance protection)
+    return {
+      available: isGreaterOrEqual(amountSmallest, current.available)
+        ? '0'
+        : subtract(current.available, amountSmallest),
+      totalPnL: subtract(current.totalPnL, amountSmallest),
+      lastSettledAt: new Date()
+    };
+  });
 
   return {
     network: balance.network,
@@ -389,11 +389,19 @@ export async function removeUserWithdrawalFromBalances(
 
       const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
 
-      balance.available = subtract(balance.available, amountSmallest);
-      balance.totalWithdrawn = add(balance.totalWithdrawn, amountSmallest);
-      balance.lastWithdrawalAt = new Date();
+      await casUpdate(Balance, balance._id, ['available', 'totalWithdrawn'], (current) => {
+        if (!isGreaterOrEqual(current.available, amountSmallest)) {
+          throw new Error(
+            `Insufficient balance on ${sourceNetwork}. Available: ${toReadableUnit(current.available, pair.decimals)}, Required: ${amount}`
+          );
+        }
 
-      await balance.save({ session });
+        return {
+          available: subtract(current.available, amountSmallest),
+          totalWithdrawn: add(current.totalWithdrawn, amountSmallest),
+          lastWithdrawalAt: new Date()
+        };
+      }, { session });
 
       removed.push({
         network: sourceNetwork,
@@ -413,16 +421,23 @@ export async function removeUserWithdrawalFromBalances(
 
         if (compare(balance.available, '0') <= 0) continue; //skip zero balances
 
-        const toRemove = min(balance.available, remaining);
-
-        balance.available = subtract(balance.available, toRemove);
-        balance.totalWithdrawn = add(balance.totalWithdrawn, toRemove);
-
         const prevLastWithdrawalAt = balance.lastWithdrawalAt || null;
 
-        balance.lastWithdrawalAt = new Date();
+        // Recomputed against fresh values on every retry, so the amount taken
+        // reflects what is actually available when the write lands.
+        let toRemove = '0';
 
-        await balance.save({ session });
+        await casUpdate(Balance, balance._id, ['available', 'totalWithdrawn'], (current) => {
+          toRemove = min(current.available, remaining);
+
+          return {
+            available: subtract(current.available, toRemove),
+            totalWithdrawn: add(current.totalWithdrawn, toRemove),
+            lastWithdrawalAt: new Date()
+          };
+        }, { session });
+
+        if (compare(toRemove, '0') <= 0) continue;
 
         removed.push({
           balanceId: balance._id,
@@ -522,17 +537,43 @@ export async function lockUserAssetBalances(
     );
   }
 
-  // PHASE 3: Now apply all locks (we know we have enough)
-  for (const planned of plannedLocks) {
-    const balance = await Balance.findById(planned.balanceId);
-    if (!balance) {
-      throw new Error(`Balance ${planned.balanceId} not found`);
+  // PHASE 3: Apply each lock atomically. The plan was computed from a snapshot,
+  // so every lock re-checks availability at write time; if one fails, the locks
+  // already applied are released again so no funds are left stranded.
+  const appliedLocks = [];
+
+  try {
+    for (const planned of plannedLocks) {
+      const updated = await casUpdate(Balance, planned.balanceId, ['available', 'locked'], (current) => {
+        if (!isGreaterOrEqual(current.available, planned.amount)) {
+          throw new Error(
+            `Insufficient balance. Required: ${amount}, balance ${planned.balanceId} changed during locking`
+          );
+        }
+
+        return {
+          available: subtract(current.available, planned.amount),
+          locked: add(current.locked, planned.amount),
+          lastLockedAt: new Date()
+        };
+      });
+
+      if (!updated) {
+        throw new Error(`Balance ${planned.balanceId} not found`);
+      }
+
+      appliedLocks.push(planned);
+    }
+  } catch (error) {
+    for (const applied of appliedLocks) {
+      await casUpdate(Balance, applied.balanceId, ['available', 'locked'], (current) => ({
+        available: add(current.available, applied.amount),
+        locked: max('0', subtract(current.locked, applied.amount)),
+        lastLockedAt: applied.prevLastLockedAt || undefined
+      }));
     }
 
-    balance.available = subtract(balance.available, planned.amount);
-    balance.locked = add(balance.locked, planned.amount);
-    balance.lastLockedAt = new Date();
-    await balance.save();
+    throw error;
   }
 
   return {
@@ -563,39 +604,46 @@ export async function unlockUserAssetBalances(baseAsset, distributions) {
 
   for (const dist of distributions) {
     try {
-      const balance = await Balance.findById(dist.balanceId);
-      if (!balance) {
+      let lockedShort = null;
+      let prevLastUnlockedAt;
+
+      const updated = await casUpdate(Balance, dist.balanceId, ['available', 'locked'], (current, raw) => {
+        // Before subtracting, verify sufficient locked balance
+        if (!isGreaterOrEqual(current.locked, dist.amount)) {
+          lockedShort = current.locked;
+          return null;
+        }
+
+        lockedShort = null;
+        prevLastUnlockedAt = raw.lastUnlockedAt;
+
+        return {
+          locked: subtract(current.locked, dist.amount),
+          available: add(current.available, dist.amount),
+          //handle rollback cases
+          ...(dist.lastLockedAt
+            ? { lastLockedAt: dist.lastLockedAt }
+            : { lastUnlockedAt: new Date() })
+        };
+      });
+
+      if (!updated) {
         errors.push(`Balance ${dist.balanceId} not found - funds may be permanently locked`);
         continue;
       }
 
-      // Before subtracting, verify sufficient locked balance
-      if (!isGreaterOrEqual(balance.locked, dist.amount)) {
+      if (lockedShort !== null) {
         errors.push(
           `Insufficient locked balance ${dist.balanceId}. ` +
-          `Locked: ${balance.locked}, Attempting to unlock: ${dist.amount}`
+          `Locked: ${lockedShort}, Attempting to unlock: ${dist.amount}`
         );
         continue;
       }
-
-      const prevLastUnlockedAt = balance.lastUnlockedAt;
 
       unlockedDistributions.push({
         ...dist,
         prevLastUnlockedAt,
       })
-
-      balance.locked = subtract(balance.locked, dist.amount);
-      balance.available = add(balance.available, dist.amount);
-
-      //handle rollback cases
-      if (dist.lastLockedAt) {
-        balance.lastLockedAt = dist.lastLockedAt
-      } else {
-        balance.lastUnlockedAt = new Date();
-      }
-
-      await balance.save();
 
       totalUnlocked = add(totalUnlocked, dist.amount);
     } catch (error) {

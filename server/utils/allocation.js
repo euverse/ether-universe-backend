@@ -328,16 +328,41 @@ export async function lockAllocations({ tradingAccountId, userId }, baseAsset, a
         );
     }
 
-    // PHASE 3: Now apply all locks (we know we have enough)
-    for (const planned of plannedLocks) {
-        const allocation = await AssetAllocation.findById(planned.allocationId);
-        if (!allocation) {
-            throw new Error(`Allocation ${planned.allocationId} not found`);
+    // PHASE 3: Apply each lock atomically. The plan was computed from a snapshot,
+    // so every lock re-checks availability at write time; if one fails, the locks
+    // already applied are released again so no funds are left stranded.
+    const appliedLocks = [];
+
+    try {
+        for (const planned of plannedLocks) {
+            const updated = await casUpdate(AssetAllocation, planned.allocationId, ['available', 'locked'], (current) => {
+                if (!isGreaterOrEqual(current.available, planned.amount)) {
+                    throw new Error(
+                        `Insufficient available allocation. Required: ${amount}, allocation ${planned.allocationId} changed during locking`
+                    );
+                }
+
+                return {
+                    available: subtract(current.available, planned.amount),
+                    locked: add(current.locked, planned.amount)
+                };
+            });
+
+            if (!updated) {
+                throw new Error(`Allocation ${planned.allocationId} not found`);
+            }
+
+            appliedLocks.push(planned);
+        }
+    } catch (error) {
+        for (const applied of appliedLocks) {
+            await casUpdate(AssetAllocation, applied.allocationId, ['available', 'locked'], (current) => ({
+                available: add(current.available, applied.amount),
+                locked: max('0', subtract(current.locked, applied.amount))
+            }));
         }
 
-        allocation.available = subtract(allocation.available, planned.amount);
-        allocation.locked = add(allocation.locked, planned.amount);
-        await allocation.save();
+        throw error;
     }
 
     return {
@@ -368,26 +393,37 @@ export async function unlockAllocations(baseAsset, distributions) {
 
     for (const dist of distributions) {
         try {
-            const allocation = await AssetAllocation.findById(dist.allocationId);
-            if (!allocation) {
+            let lockedShort = null;
+
+            const updated = await casUpdate(AssetAllocation, dist.allocationId, ['available', 'locked'], (current) => {
+                // Verify sufficient locked amount
+                if (!isGreaterOrEqual(current.locked, dist.amount)) {
+                    lockedShort = current.locked;
+                    return null;
+                }
+
+                lockedShort = null;
+
+                return {
+                    locked: subtract(current.locked, dist.amount),
+                    available: add(current.available, dist.amount)
+                };
+            });
+
+            if (!updated) {
                 errors.push(
                     `Allocation ${dist.allocationId} not found - may have expired`
                 );
                 continue;
             }
 
-            // Verify sufficient locked amount
-            if (!isGreaterOrEqual(allocation.locked, dist.amount)) {
+            if (lockedShort !== null) {
                 errors.push(
                     `Insufficient locked amount in allocation ${dist.allocationId}. ` +
-                    `Locked: ${allocation.locked}, Attempting to unlock: ${dist.amount}`
+                    `Locked: ${lockedShort}, Attempting to unlock: ${dist.amount}`
                 );
                 continue;
             }
-
-            allocation.locked = subtract(allocation.locked, dist.amount);
-            allocation.available = add(allocation.available, dist.amount);
-            await allocation.save();
 
             totalUnlocked = add(totalUnlocked, dist.amount);
         } catch (error) {
@@ -443,10 +479,20 @@ export async function deductFromAllocations(
         if (compare(remaining, '0') <= 0) break;
         if (compare(allocation.available, '0') <= 0) continue; // skip zero available
 
-        const toRemove = min(allocation.available, remaining);
-        allocation.available = subtract(allocation.available, toRemove);
-        allocation.total = subtract(allocation.total, toRemove);
-        await allocation.save();
+        // Recomputed against fresh values on every retry, so the amount taken
+        // reflects what is actually available when the write lands.
+        let toRemove = '0';
+
+        await casUpdate(AssetAllocation, allocation._id, ['available', 'total'], (current) => {
+            toRemove = min(current.available, remaining);
+
+            return {
+                available: subtract(current.available, toRemove),
+                total: subtract(current.total, toRemove)
+            };
+        }, { session });
+
+        if (compare(toRemove, '0') <= 0) continue;
 
         removed.push({
             allocationId: allocation._id,
